@@ -1,102 +1,178 @@
-# Conduit
+# OSCP — Operating System Context Protocol
 
-> An agent-facing layer on top of Linux — giving AI systems full, privileged GUI control.
+## Vision
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Status-Building-FF6B35?style=flat-square" />
-  <img src="https://img.shields.io/badge/License-MIT-42B883?style=flat-square" />
-  <img src="https://img.shields.io/badge/Platform-Linux- FCC624?style=flat-square&logo=linux&logoColor=black" />
-</p>
+OSCP exists to make agents **first-class users of computing systems**, alongside humans.
 
----
+Today's software ecosystem is designed around a single assumption:
 
-## The Problem
+> Humans interact with computers through graphical interfaces.
 
-Operating systems — Linux included — were designed for human operators. AI agents need a different interface entirely.
+Agents currently imitate humans by observing screens, moving cursors, pressing keys, and reacting to pixels. This approach introduces fragility, hidden state, and unreliable behavior over long workflows.
 
-Current approach: agents pseudo-lives in a world built for fingers and eyeballs. They see pixels, not semantics. They send keystrokes through fragile OCR pipelines. They navigate desktops like blind users with a keyboard.
+OSCP aims to replace GUI imitation with a native semantic execution layer.
 
-This is not sustainable.
+Instead of interacting with computers through:
 
----
+- pixels
+- coordinates
+- screenshots
+- visual guessing
+- UI-specific hacks
 
-## The Vision
+agents interact through:
 
-**Conduit** adds an agent-native layer between the Linux kernel and the desktop environment. Not a wrapper. Not a hack. A first-class interface for autonomous systems to perceive and interact with the GUI — the way the OS intended humans to.
+- structured state
+- deterministic actions
+- event streams
+- semantic context
 
-```
-┌─────────────────────────────────────────┐
-│         AI Agents (pi, OpenClaw, etc)   │
-├─────────────────────────────────────────┤
-│              CONDUIT                     │
-│   ┌─────────┬──────────┬──────────┐    │
-│   │ Visual  │   Input  │  Window  │    │
-│   │ Context │  Injection│  State   │    │
-│   └─────────┴──────────┴──────────┘    │
-├─────────────────────────────────────────┤
-│       Linux Kernel / X11 / Wayland       │
-├─────────────────────────────────────────┤
-│              Hardware                   │
-└─────────────────────────────────────────┘
-```
+The long-term vision is:
 
-Agents get:
-- **Canonical screen context** — structured UI hierarchy, not raw pixels
-- **Privileged input** — keyboard/mouse at the kernel level, not through OCR
-- **Window semantics** — focus, ownership, lifecycle, z-order
-- **Permission model** — explicit grant/revoke for desktop access
+> Everything a human can do digitally should be accessible to agents with equal or greater reliability.
+
+OSCP does not seek to replace operating systems.
+
+OSCP introduces a new abstraction:
+
+> Humans and agents become equal participants in the computing environment.
 
 ---
 
-## Architecture
+## Objectives
+
+### Agent-native interaction
+
+Create an interaction model where agents no longer need to pretend to be humans.
+
+Agents should communicate with systems through a structured protocol rather than visual simulation.
+
+### Deterministic execution
+
+Separate intelligence from execution.
+
+Reasoning may remain probabilistic, but execution should be deterministic and verifiable.
+
+The system should guarantee:
+
+- clear outcomes
+- predictable behavior
+- observable state transitions
+- explicit failures
+
+### Atomic operations
+
+Reduce all system interactions into the smallest practical semantic actions.
+
+Actions should:
+
+- represent a single intent
+- produce a single side effect
+- be independently verifiable
+- remain composable into larger workflows
+
+### Semantic system understanding
+
+Expose machine state in structured form rather than raw visual representation.
+
+Agents should understand:
+
+- what exists
+- what changed
+- what can be acted upon
+- what actions are available
+
+without depending on screenshots or visual interpretation.
+
+### Application-agnostic runtime
+
+Keep the execution runtime generic.
+
+OSCP should not embed application-specific knowledge.
+
+Application understanding should exist separately through skills, adapters, or extensions.
+
+### Event-driven operation
+
+Move away from continuous polling and reactive GUI observation.
+
+The system should expose changes as structured events so agents can operate with awareness of state transitions in real time.
+
+### Reliability over convenience
+
+Prioritize robustness over shortcuts.
+
+The architecture should optimize for:
+
+- repeatability
+- fault tolerance
+- recoverability
+- observability
+- predictable behavior
+
+rather than minimizing implementation complexity.
+
+---
+
+## Goals
+
+### Near-term goals
+
+- Build an operating-system execution protocol for agents
+- Expose deterministic semantic actions
+- Provide structured state and event streams
+- Support local on-device agents
+- Enable reliable cross-application workflows
+- Remove dependence on visual interaction wherever possible
+
+### Mid-term goals
+
+- Create a reusable skill ecosystem
+- Standardize agent interaction patterns
+- Support complex autonomous workflows
+- Enable interoperability between different agent systems
+
+### Long-term goals
+
+- Establish agents as first-class entities within computing environments
+- Create a universal execution substrate for digital tasks
+- Enable agents to operate with greater consistency than humans across software systems
+- Shift digital interaction from GUI-centric workflows to semantic workflows
+
+---
+
+## Core Principle
+
+OSCP does not attempt to make intelligence deterministic.
+
+OSCP attempts to make **execution deterministic**.
+
+In simple terms:
+
+> Humans interact through interfaces.
+> Agents interact through meaning.
+
+---
+
+## Protocol Overview
 
 ```
-conduit/
-├── kernel-module/       # Linux kernel module (evdev, uinput)
-├── daemon/              # Userspace daemon (IPC, agent communication)
-├── agent-sdk/           # SDK for agent integration
-├── examples/            # Example implementations
-└── docs/                # Design docs & specs
+┌─────────────────────────────────────────────────────┐
+│                    OSCP Protocol                     │
+├─────────────────────────────────────────────────────┤
+│  Layer 1: Context     — Hierarchical OS state        │
+│  Layer 2: Input       — Structured input injection   │
+│  Layer 3: Events      — Real-time system events     │
+│  Layer 4: Permissions — Capability-based access      │
+└─────────────────────────────────────────────────────┘
 ```
-
-### Core Components
-
-| Component | Responsibility |
-|-----------|---------------|
-| **kernel-module** | Input injection, screen capture primitives |
-| **daemon** | Agent IPC, permission enforcement, state management |
-| **agent-sdk** | Client library for agent frameworks |
 
 ---
 
 ## Status
 
-🚧 **Early development** — architecture being defined, first components in progress.
-
-This is a foundational infrastructure project. The goal is to establish Conduit as the standard way AI agents interact with Linux desktops.
+🚧 **Early development** — protocol design in progress.
 
 ---
 
-## Why Linux First
-
-Linux is the natural starting point — open, modular, and already the substrate for most server-side AI infrastructure. Once Conduit is stable on Linux, the patterns extend.
-
-> Mac and Windows weren't designed with the vision that someday agents would use them. We are adding that layer.
-
----
-
-## Contributing
-
-This project is in active development. Architecture discussions, PRs, and ideas welcome.
-
----
-
-## Philosophy
-
-The future of computing is not humans clicking buttons. It's autonomous systems perceiving and acting with the same depth humans have — but at machine speed and scale.
-
-**Conduit is the bridge.**
-
----
-
-*Conduit. An agent-facing layer on top of Linux.*
+*OSCP — Operating System Context Protocol.*
