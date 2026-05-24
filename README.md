@@ -68,6 +68,51 @@ Agent does:   Click, type, scroll — with perfect precision
 
 ---
 
+## Technical Principle
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│   Go sideways at the source, not backwards from pixels.         │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+The two paths of GUI extraction:
+
+```
+FORWARD (how rendering happens):
+App → Layout → Draw Calls → GPU → Pixels
+
+BACKWARDS (vision approach):
+Pixels → OCR → Guess → Element positions (unreliable)
+
+SIDEWAYS at source (OSCP approach):
+App → Layout → INTERCEPT HERE → Structured element list (exact)
+                ↑
+           Draw calls already contain:
+           - What texture
+           - Where (x, y, w, h)
+           - In what order (z)
+           - For which window (HWND)
+```
+
+**The insight:** Draw calls already ARE the element list. We intercept them before they become pixels.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│   Drawing a button = {texture, position, z}                     │
+│                                                                 │
+│   This IS the element.                                          │
+│                                                                 │
+│   The pixel is the result. The draw call is the truth.          │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## The Mechanism: Intercept at the Source
 
 Instead of observing the final output (pixels), OSCP intercepts the rendering process at its source — the graphics API layer.
