@@ -6,11 +6,13 @@ OSCP (Operating System Context Protocol) is a foundational protocol for agent-na
 
 **Principle:** "Intercept the compositor. Decode the render tree. Agent provides the meaning."
 
-## Architecture
+## Core Concept
+
+OSCP makes agents first-class citizens of operating systems designed for humans.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                 FIRST-CLASS AGENT                           │
+│                 FIRST-CLASS AGENT = OSCP + SKILLS          │
 │                                                             │
 │  ┌─────────────────┐    ┌─────────────────┐                │
 │  │  OSCP           │ +  │  Agent Skills   │  = First-Class  │
@@ -22,43 +24,69 @@ OSCP (Operating System Context Protocol) is a foundational protocol for agent-na
 ### What OSCP Provides
 - Exact geometry: positions, bounds, z-order
 - Window structure: titles, sizes, focus state
-- Texture IDs: what's being rendered
+- Render operations (macOS/Linux) or element tree (Windows)
 - Mouse position: cursor and hovered element
 - Real-time stream: 30fps render trees
 
-### What Agent Skills Provide (filled by agent)
+### What Agent Skills Provide
 - Element types: button vs label vs input
 - Text content: inferred from patterns
-- Element states: enabled, disabled, focused
-- Layout understanding: toolbar, sidebar, etc.
+- State detection: enabled, disabled, focused
+- Layout reasoning: toolbar, sidebar, etc.
 - Interaction logic: what's clickable
-
-### What Intelligence Provides
-- Reasoning about the geometry
-- Planning multi-step tasks
-- Decision making
 
 ## Platforms (V1)
 
-| Platform | Compositor | Intercept Method |
-|----------|-----------|------------------|
-| **macOS** | Window Server | Layer tree extraction |
-| **Linux** | X11/Wayland | Scene graph |
-| **Windows** | Deferred | V2 (UIA + Win32) |
+| Platform | Method | Coverage | Time | Risk |
+|----------|--------|----------|------|------|
+| **macOS** | CGWindowList (Window Server) | 95% | 2-3 mo | Low |
+| **Linux** | X11 + Compositor Hook | 90-95% | 3-4 mo | Medium |
+| **Windows** | UIA + Win32 | 90% | 1-2 mo | Very Low |
+
+## Per-Platform Approach
+
+### macOS
+- Window Server is the compositor
+- CGWindowListCopyWindowInfo reads layer tree
+- No GPU hooks needed
+- Official, stable API
+
+### Linux
+- **Tier 1:** X11 APIs (XQueryTree, XGetWindowProperty)
+  - Covers X11 desktops + Xwayland apps (~85%)
+- **Tier 2:** Compositor OpenGL Hook
+  - Hooks: Mutter, KWin, Sway EGL/OpenGL
+  - Captures native Wayland windows (~5-10% more)
+
+### Windows
+- **Tier 1:** Win32 APIs (EnumWindows, GetWindowRect)
+- **Tier 2:** UI Automation (element types, names, states)
+- Note: No documented API for Windows render ops. UIA + Win32 chosen for stability.
 
 ## Coverage
 
-- macOS: ~95%
-- Linux: ~90%
-- Windows: Deferred to V2
+| Platform | Coverage | Gaps |
+|----------|----------|------|
+| **macOS** | 95% | Screen sharing, DRM, sandboxed |
+| **Linux** | 90-95% | Some Wayland compositors, TTY, KMS |
+| **Windows** | 90% | Non-UIA apps, legacy Win32, protected |
 
-## Key Decisions
+## Gaps After V1
 
-1. **OS-level compositor intercept** — Not per-app hooks. One point, all apps.
-2. **No screenshots** — Raw geometry only. No pixels. No VLM dependency.
-3. **Agent provides meaning** — Agent skills fill the gap between geometry and understanding.
-4. **macOS + Linux only for V1** — Windows lacks documented render op APIs.
+| Gap | Fillable? |
+|-----|-----------|
+| Element semantics (macOS/Linux) | ✅ Agent skills |
+| WebGL/Canvas content | ⚠️ Partially |
+| Color semantics | ✅ Protocol extension |
+| Audio | ✅ Separate API later |
+| Protected content | ❌ OS restriction |
 
 ## Status
 
-Phase 0 complete. Implementation starting for macOS and Linux.
+Phase 0 complete. V1 implementation starting for all three platforms.
+
+## References
+
+- GitHub: github.com/rishi-ie/OSCP
+- Protocol: OSCP/protocol/SPEC.md
+- Platforms: OSCP/platforms/{macos,linux,windows}/SPEC.md

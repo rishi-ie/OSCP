@@ -2,47 +2,75 @@
 
 ## Key Architectural Decisions
 
-### 1. OS-Level Compositor Interception (Not Per-App Hook)
+### 1. OS-Level Compositor Interception
 
-**Decision:** Intercept the compositor's render tree at the OS level, not per-app DXGI hooks.
+**Decision:** Intercept at the compositor level, not per-app.
 
 **Rationale:**
-- Per-app hook only captures DirectX apps (~85%)
-- Compositor intercept captures ALL apps (OpenGL, Vulkan, GDI, etc.)
-- One interception point vs inject into every process
-- Games with anti-cheat still captured at compositor output
+- Per-app hook only captures specific graphics APIs (DirectX, OpenGL, etc.)
+- Compositor intercept captures ALL apps in one hook
+- One interception point covers everything
 
-### 2. No Screenshots, No Pixels, No VLM
+### 2. No Screenshots, No Pixels
 
-**Decision:** OSCP delivers only raw render geometry — positions, z-order, texture IDs from compositor.
+**Decision:** OSCP delivers geometry only. No screenshots. No VLM dependency.
 
 **Rationale:**
 - Screenshots reintroduce VLM dependency
 - Pixels are slow, expensive, unreliable
 - Agent provides the meaning, not the protocol
-- Compositor render tree has all the structural data needed
+- Geometry is sufficient for reliable interaction
 
-### 3. Intercept the Compositor (Not Per-App)
+### 3. Three-Layer Strategy (No One Size Fits All)
 
-**Decision:** One interception point at the compositor covers all apps.
+**Decision:** Use best available method per platform, not a single universal approach.
 
-**Before (per-app hook):**
-```
-App A (DXGI) ──► Hook ──► missed
-App B (OpenGL) ──► ❌ Hook ──► missed
-App C (Vulkan) ──► ❌ Hook ──► missed
-```
+**Rationale:**
+- Linux: X11 is introspectable, Wayland needs compositor hooks
+- macOS: Window Server has all data via CGWindowListCopyWindowInfo
+- Windows: No render-op API exists, UIA + Win32 is the stable choice
 
-**After (compositor intercept):**
-```
-App A ─┐
-App B ─┼─► Compositor ─► INTERCEPT ─► Agent (covers all)
-App C ─┘
-```
+### 4. Per-Platform Decisions
 
-### 4. Agent as Client, Driver as Server
+#### macOS: CGWindowListCopyWindowInfo
 
-**Decision:** Platform driver is TCP/Unix socket server. Agent harness connects as client.
+**Why:**
+- Window Server is the compositor
+- Layer tree accessible via official APIs
+- No GPU hooks needed
+- 95% coverage
+
+#### Linux: X11 + Compositor Hook Hybrid
+
+**Why:**
+- X11 APIs give 85% coverage (X11 desktops + Xwayland)
+- Compositor OpenGL hook adds Wayland-native coverage
+- Unified output hides implementation details
+- Total: 90-95%
+
+#### Windows: UIA + Win32 (Not Render Ops)
+
+**Why Not Render Ops:**
+- No documented API exposes render operations from DWM
+- DWM hook: undocumented, risky, 5-9 months
+- Kernel driver: extreme complexity, 10-14 months, requires signing
+- UIA + Win32: works today, 90% coverage, 1-2 months
+
+**Decision:** Pragmatic. Ship with UIA + Win32. V2 explores DWM hook.
+
+### 5. Agent Provides the Meaning
+
+**Decision:** Protocol delivers geometry. Agent skills fill semantics gap.
+
+**Rationale:**
+- Agent can infer element types from geometry
+- Position, size, z-order patterns reveal UI structure
+- Agent skills provide pattern matching and learning
+- Platform independence (same agent works on all OS)
+
+### 6. Agent as Client, Driver as Server
+
+**Decision:** Platform driver is TCP/Unix socket server. Agent harness connects.
 
 **Rationale:**
 - Clean separation of concerns
@@ -50,7 +78,7 @@ App C ─┘
 - Agent can be swapped without touching driver
 - Multiple agents can connect to same driver
 
-### 5. Length-Prefixed JSON Framing
+### 7. Length-Prefixed JSON Framing
 
 **Decision:** Every message is `[4-byte big-endian length][JSON payload]`.
 
@@ -60,7 +88,7 @@ App C ─┘
 - Self-delimiting frames
 - Language-agnostic
 
-### 6. Event-Driven Render Tree Streaming
+### 8. Event-Driven Render Tree Streaming
 
 **Decision:** Driver continuously pushes render trees to agent at target frame rate.
 
@@ -70,56 +98,60 @@ App C ─┘
 - Window opened/closed/focused events
 - Agent sees every change as it happens
 
-### 7. Raw Geometry Only from Compositor
-
-**Decision:** Agent receives `windows` with `ops` (bounds, z, texture_id) from compositor scene tree.
-
-**Rationale:**
-- Agent figures out semantics from geometry
-- No protocol-level assumptions about UI patterns
-- No element types, states, or accessibility data
-- Agent can be as smart or simple as needed
-
-### 8. Render Tree Structure (Not Screenshot)
-
-**Decision:** Frame is a hierarchical render tree, not a flat pixel buffer.
-
-**Rationale:**
-- Render tree preserves spatial structure
-- Z-order, parent-child relationships preserved
-- Agent can reason about layout from tree
-- Tree is smaller than pixel buffer
-
 ## Rejected Approaches
 
-### Per-App DXGI Hook
-**Rejected:** Only captures DirectX apps. Misses OpenGL, Vulkan, games.
+### Per-App DXGI Hook (Windows)
+
+**Rejected:** Only captures DirectX apps (~85%). Complex, fragile.
+
+### DWM Hook (Windows V1)
+
+**Rejected:** Too risky. Undocumented, breaks on updates, requires 5-9 months.
+
+### Kernel Driver (Windows)
+
+**Rejected:** Extreme complexity. 10-14 months, requires Microsoft signing, BSOD risk.
 
 ### Screen Recording / Screenshots
-**Rejected:** Reintroduces VLM dependency, slow, expensive, unreliable.
 
-### Accessibility APIs (UIA, AXUIElement, AT-SPI)
-**Rejected:** Agent provides the meaning. Semantic types not needed from protocol.
+**Rejected:** Reintroduces VLM dependency, slow, expensive.
 
-### Request/Response Polling
-**Rejected:** Event-driven streaming is better for real-time UI automation.
+### Accessibility APIs Only (Linux/macOS)
 
-### Multiple Interception Points
-**Rejected:** One point at compositor is simpler and more reliable than multiple per-app hooks.
+**Rejected:** Agent provides the meaning. Accessibility tree not needed.
 
-## Platform-Specific Decisions
+## Future Decisions (V2)
 
-### Windows: DWM Compositor
-- Use Graphics Capture API / DWM internals
-- Intercept scene tree at compositor level
-- Covers DirectX, OpenGL, Vulkan, GDI, all apps
+### Windows Render Operations
 
-### macOS: Window Server
-- Extract layer tree from Window Server
-- Intercept at compositor level
-- Covers AppKit, Metal, Quartz, all apps
+Options:
+1. DWM DirectX hook (experimental, risky)
+2. Kernel driver (proper but complex)
 
-### Linux: X11/Wayland
-- Intercept scene graph in X11 server / Wayland compositor
-- Covers X11, Wayland, all apps
-- Fallback: X11 if Wayland not available
+Status: Deferred from V1.
+
+### Protocol Extensions
+
+Possible:
+- Color sampling (for error state detection)
+- Audio capture API
+- Hardware access API
+
+Status: Future consideration.
+
+## Platform-Specific Notes
+
+### macOS
+- "Screen Recording" permission name is misleading
+- Actually enables Window Server layer tree access
+- No GPU hooks needed
+
+### Linux
+- X11 is unified (one API works everywhere)
+- Wayland is fragmented (per-compositor hooks needed)
+- Xwayland bridges X11 apps to Wayland desktops
+
+### Windows
+- DWM (Desktop Window Manager) is the compositor
+- No public API for render operation extraction
+- UIA + Win32 is the stable, official path
