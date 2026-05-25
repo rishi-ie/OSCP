@@ -9,7 +9,7 @@
 
 The OSCP protocol defines how platform drivers communicate with agent harnesses. It is transport-agnostic and can run over stdio, WebSocket, Unix domain sockets, TCP, or any bidirectional channel.
 
-**Principle:** Intercept the compositor. Decode the render tree. Agent provides the meaning.
+**Principle:** Deterministic. Low-latency. Error-resilient. No visual parsing.
 
 ---
 
@@ -53,33 +53,89 @@ Sent continuously at target frame rate (default 30fps, configurable).
   "type": "render_tree",
   "frame_id": 12345,
   "timestamp": 1716576000000,
+  "platform": "linux",
   "windows": [
     {
-      "id": "win_0x12345",
-      "title": "Visual Studio Code",
+      "id": "win_0x400001",
+      "title": "VS Code",
       "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
       "position": {"x": 100, "y": 50},
       "focused": true,
-      "ops": [
+      "elements": [
         {
-          "id": "op_001",
-          "bounds": {"x": 10, "y": 10, "w": 100, "h": 30},
-          "z": 1,
-          "texture_id": "0xAA01"
+          "id": "e_001",
+          "type": "button",
+          "name": "Save",
+          "bounds": {"x": 1750, "y": 5, "w": 80, "h": 25},
+          "state": ["enabled", "visible"],
+          "confidence": 0.95,
+          "source": "atspi"
         },
         {
-          "id": "op_002",
-          "bounds": {"x": 120, "y": 10, "w": 80, "h": 30},
-          "z": 2,
-          "texture_id": "0xAA02"
+          "id": "e_002",
+          "type": "menu_item",
+          "name": "File",
+          "bounds": {"x": 0, "y": 30, "w": 50, "h": 25},
+          "state": ["enabled"],
+          "confidence": 0.95,
+          "source": "atspi",
+          "children": [
+            {
+              "id": "e_003",
+              "type": "menu_item",
+              "name": "New File",
+              "bounds": {"x": 0, "y": 55, "w": 150, "h": 25}
+            }
+          ]
         }
       ]
     }
   ],
+  "tree_analysis": {
+    "coverage_score": 0.9,
+    "named_elements": 150,
+    "unlabeled_elements": 12,
+    "confidence": "HIGH"
+  },
   "mouse": {
     "x": 540,
     "y": 320,
-    "hovered_op_id": "op_042"
+    "hovered_element_id": "e_042"
+  }
+}
+```
+
+### Fallback Render Tree (Empty Tree Scenario)
+
+```json
+{
+  "type": "render_tree",
+  "frame_id": 12346,
+  "platform": "windows",
+  "windows": [
+    {
+      "id": "win_0x500001",
+      "title": "CustomGame",
+      "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
+      "focused": true,
+      "elements": [],
+      "fallback_active": true,
+      "fallback_method": "position_only",
+      "fallback_reason": "custom_renderer_detected"
+    }
+  ],
+  "tree_analysis": {
+    "coverage_score": 0.05,
+    "named_elements": 0,
+    "unlabeled_elements": 1,
+    "avg_depth": 1,
+    "confidence": "NONE",
+    "recommended_action": "human_handoff"
+  },
+  "mouse": {
+    "x": 540,
+    "y": 320,
+    "hovered_element_id": null
   }
 }
 ```
@@ -94,8 +150,8 @@ Sent when the agent wants to interact with the system.
   "action_id": "act_001",
   "action": {
     "kind": "click",
-    "x": 50,
-    "y": 25,
+    "x": 1750,
+    "y": 17,
     "button": "left"
   }
 }
@@ -103,13 +159,15 @@ Sent when the agent wants to interact with the system.
 
 ### 3. Driver → Harness: Action Result
 
-Confirms or reports failure of an action.
+Confirms or reports failure of an action with confidence scoring.
 
 ```json
 {
   "type": "action_result",
   "action_id": "act_001",
   "success": true,
+  "confidence": 0.95,
+  "source": "uia",
   "error": null
 }
 ```
@@ -119,22 +177,34 @@ Confirms or reports failure of an action.
   "type": "action_result",
   "action_id": "act_002",
   "success": false,
-  "error": "Window not focused"
+  "confidence": 0.2,
+  "source": "heuristic",
+  "error": {
+    "code": "EMPTY_TREE",
+    "message": "Semantic tree empty, fallback attempted",
+    "reasoning": "Custom renderer detected, no element names",
+    "alternatives": [
+      {"bounds": {"x": 1700, "y": 5}, "confidence": 0.3},
+      {"bounds": {"x": 1750, "y": 5}, "confidence": 0.2},
+      {"bounds": {"x": 1800, "y": 5}, "confidence": 0.1}
+    ],
+    "recommended_action": "explore_and_confirm"
+  }
 }
 ```
 
 ### 4. Harness → Driver: Request
 
-For explicit queries (e.g., get render op at position).
+For explicit queries.
 
 ```json
 {
   "type": "request",
   "request_id": "req_001",
-  "method": "get_op_at",
+  "method": "get_element_at",
   "params": {
-    "x": 100,
-    "y": 200
+    "x": 1750,
+    "y": 17
   }
 }
 ```
@@ -147,10 +217,11 @@ Response to a request.
 {
   "type": "response",
   "request_id": "req_001",
+  "confidence": 0.8,
   "result": {
-    "op_id": "op_042",
-    "window_id": "win_0x12345",
-    "bounds": {"x": 90, "y": 190, "w": 50, "h": 20}
+    "element_id": "e_001",
+    "bounds": {"x": 1750, "y": 5, "w": 80, "h": 25},
+    "source": "uia"
   }
 }
 ```
@@ -170,16 +241,6 @@ System-level events.
 }
 ```
 
-```json
-{
-  "type": "event",
-  "event": {
-    "kind": "window_focused",
-    "window_id": "win_0x12345"
-  }
-}
-```
-
 ### 7. Harness ↔ Driver: Handshake
 
 Initial connection and capability negotiation.
@@ -190,7 +251,7 @@ Initial connection and capability negotiation.
   "type": "hello",
   "version": "0.2.0",
   "agent": "pi-agent",
-  "capabilities": ["render_tree", "actions", "events"]
+  "capabilities": ["render_tree", "actions", "events", "error_handling"]
 }
 ```
 
@@ -199,10 +260,10 @@ Initial connection and capability negotiation.
 {
   "type": "welcome",
   "version": "0.2.0",
-  "driver": "oscp-windows",
-  "platform": "windows",
-  "compositor": "dwm",
-  "capabilities": ["render_tree", "actions", "events"],
+  "driver": "oscp-linux",
+  "platform": "linux",
+  "semantic_api": "atspi2",
+  "capabilities": ["render_tree", "actions", "events", "cdp_fallback", "heuristics"],
   "settings": {
     "frame_rate": 30
   }
@@ -211,71 +272,102 @@ Initial connection and capability negotiation.
 
 ---
 
-## Render Tree
+## Tree Analysis
 
-The render tree represents the full compositor scene — all windows and their render operations.
+### Fields
 
-### Structure
+| Field | Type | Description |
+|-------|------|-------------|
+| `coverage_score` | float | 0.0-1.0, percentage of UI covered |
+| `named_elements` | int | Elements with text labels |
+| `unlabeled_elements` | int | Elements without text labels |
+| `avg_depth` | float | Average tree depth |
+| `confidence` | enum | HIGH, MEDIUM, LOW, NONE |
+
+### Confidence Thresholds
+
+| Confidence | Threshold | Agent Action |
+|------------|-----------|--------------|
+| HIGH | > 0.8 | Execute immediately |
+| MEDIUM | 0.5-0.8 | Execute with monitoring |
+| LOW | 0.3-0.5 | Explore first |
+| NONE | < 0.2 | Human handoff |
+
+### Fallback Triggers
+
+| Trigger | Detection |
+|---------|-----------|
+| `coverage_score < 0.3` | Low confidence |
+| `named_elements / total < 0.5` | Many unlabeled |
+| `root_has_no_children` | Custom renderer |
+| `avg_depth < 2` | Possible canvas app |
+
+---
+
+## Element
+
+Represents a UI element in the semantic tree.
 
 ```json
 {
-  "render_tree": {
-    "windows": [...],
-    "mouse": {...}
-  }
-}
-```
-
-### Window
-
-Represents a visible window in the compositor scene.
-
-```json
-{
-  "id": "win_0x12345",
-  "title": "Visual Studio Code",
-  "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
-  "position": {"x": 100, "y": 50},
-  "focused": true,
-  "ops": [...]
+  "id": "e_001",
+  "type": "button",
+  "name": "Save",
+  "bounds": {"x": 1750, "y": 5, "w": 80, "h": 25},
+  "state": ["enabled", "visible"],
+  "confidence": 0.95,
+  "source": "uia",
+  "children": []
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Unique window identifier |
-| `title` | string | Window title |
-| `bounds` | object | Window size (w, h) |
-| `position` | object | Window position (x, y) |
-| `focused` | boolean | Is window focused |
-| `ops` | array | Render operations in this window |
+| `id` | string | Unique identifier |
+| `type` | enum | Element type |
+| `name` | string | Display text (may be empty) |
+| `bounds` | object | Position and size (x, y, w, h) |
+| `state` | array | States (enabled, disabled, etc.) |
+| `confidence` | float | 0.0-1.0 |
+| `source` | string | Data source (uia, atspi, heuristic, etc.) |
+| `children` | array | Child elements (if any) |
 
-### Render Operation
+### Element Types
 
-A render operation represents a single draw call from the compositor.
+| Type | Description |
+|------|-------------|
+| `window` | Top-level window |
+| `button` | Push button |
+| `menu` | Menu bar |
+| `menu_item` | Menu item |
+| `text_field` | Text input |
+| `text_area` | Multi-line text |
+| `checkbox` | Checkbox |
+| `radio_button` | Radio button |
+| `combo_box` | Dropdown |
+| `list` | List container |
+| `list_item` | List item |
+| `tab` | Tab |
+| `tab_group` | Tab container |
+| `toolbar` | Toolbar |
+| `toolbar_item` | Toolbar button/item |
+| `canvas` | Custom rendered area |
+| `unknown` | Unrecognized type |
 
-```json
-{
-  "id": "op_001",
-  "bounds": {"x": 10, "y": 10, "w": 100, "h": 30},
-  "z": 1,
-  "texture_id": "0xAA01",
-  "clip_bounds": {"x": 15, "y": 15, "w": 90, "h": 20}
-}
-```
+---
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique identifier within frame |
-| `bounds` | object | Destination rectangle (x, y, w, h) |
-| `z` | number | Z-index (render order, higher = on top) |
-| `texture_id` | string | Texture identifier from GPU |
-| `clip_bounds` | object | Optional clipping rectangle |
+## Error Codes
 
-**Coordinates:**
-- All coordinates are in physical pixels
-- Origin is top-left of primary monitor
-- Bounds are relative to the window
+| Code | Description |
+|------|-------------|
+| `EMPTY_TREE` | Semantic tree empty or useless |
+| `ELEMENT_NOT_FOUND` | Target element doesn't exist |
+| `ELEMENT_OBSCURED` | Target behind other elements |
+| `WINDOW_NOT_FOUND` | Target window doesn't exist |
+| `ACTION_FAILED` | Action execution failed |
+| `PERMISSION_DENIED` | OS blocked access |
+| `CONNECTION_LOST` | Transport connection lost |
+| `TIMEOUT` | Operation timed out |
 
 ---
 
@@ -286,19 +378,14 @@ A render operation represents a single draw call from the compositor.
 ```json
 {
   "kind": "click",
-  "x": 100,
-  "y": 200,
+  "x": 1750,
+  "y": 17,
   "button": "left",
   "click_type": "single"
 }
 ```
 
-- `button`: `left`, `right`, `middle`
-- `click_type`: `single`, `double`, `triple`
-
 ### Move
-
-Move cursor to absolute position.
 
 ```json
 {
@@ -309,8 +396,6 @@ Move cursor to absolute position.
 ```
 
 ### Drag
-
-Drag from start to end position.
 
 ```json
 {
@@ -332,9 +417,6 @@ Drag from start to end position.
   "delta_y": -3
 }
 ```
-
-- Positive values: scroll down/right
-- Negative values: scroll up/left
 
 ### Type
 
@@ -374,12 +456,10 @@ Drag from start to end position.
 | `window_closed` | Window removed |
 | `window_focused` | Window gained focus |
 | `window_unfocused` | Window lost focus |
-| `window_moved` | Window position changed |
-| `window_resized` | Window size changed |
-| `key_pressed` | Keyboard input received |
-| `mouse_moved` | Mouse moved |
-| `mouse_clicked` | Mouse button pressed |
-| `scroll` | Scroll event |
+| `element_added` | New element appeared |
+| `element_removed` | Element removed |
+| `element_changed` | Element properties changed |
+| `tree_quality_changed` | Coverage or confidence changed |
 
 ---
 
@@ -391,7 +471,9 @@ Drag from start to end position.
     "frame_rate": 30,
     "action_delay_ms": 0,
     "retry_on_failure": true,
-    "max_retries": 3
+    "max_retries": 3,
+    "fallback_enabled": true,
+    "human_handoff_threshold": 0.2
   }
 }
 ```
@@ -400,39 +482,23 @@ Drag from start to end position.
 - `action_delay_ms`: Delay between action and next frame
 - `retry_on_failure`: Retry failed actions
 - `max_retries`: Maximum retry attempts
+- `fallback_enabled`: Enable fallback hierarchy
+- `human_handoff_threshold`: Confidence below which to handoff
 
 ---
 
-## Error Handling
+## Appendix: Data Sources
 
-```json
-{
-  "type": "error",
-  "code": "WINDOW_NOT_FOUND",
-  "message": "Window win_0x99999 not found",
-  "recoverable": true
-}
-```
-
-| Code | Description |
-|------|-------------|
-| `TRANSPORT_ERROR` | Connection lost or broken |
-| `SERIALIZATION_ERROR` | Invalid JSON |
-| `WINDOW_NOT_FOUND` | Target window doesn't exist |
-| `ACTION_FAILED` | Action execution failed |
-| `TIMEOUT` | Operation timed out |
-
----
-
-## Appendix: Coordinate System
-
-All coordinates are in **physical pixels** relative to the **primary display's top-left corner**.
-
-- Origin (0, 0) is top-left of primary monitor
-- X increases to the right
-- Y increases downward
-- Multi-monitor: coordinates extend beyond primary bounds
-- Element bounds are relative to their window
+| Source | Platform | Description |
+|--------|----------|-------------|
+| `uia` | Windows | UI Automation |
+| `win32` | Windows | Win32 API |
+| `atspi` | Linux | AT-SPI2 D-Bus |
+| `x11` | Linux | X11 protocol |
+| `axui` | macOS | AXUIElement |
+| `cdp` | All | Chrome DevTools Protocol |
+| `heuristic` | All | Position-based inference |
+| `position` | All | Coordinates only |
 
 ---
 
@@ -445,7 +511,5 @@ a-z, 0-9, enter, tab, escape, space, backspace, delete,
 up, down, left, right,
 home, end, page_up, page_down,
 f1-f12,
-ctrl, alt, shift, meta/super/win
+ctrl, alt, shift, meta
 ```
-
-Modifiers: `ctrl`, `alt`, `shift`, `meta`

@@ -2,13 +2,13 @@
 
 ## Project Overview
 
-OSCP (Operating System Context Protocol) is a foundational protocol for agent-native OS interaction. It intercepts the compositor's render pipeline at the OS level and delivers raw render operations to agents — enabling them to see and interact with the full desktop just like humans.
+OSCP (Operating System Context Protocol) is a foundational protocol for agent-native OS interaction. It delivers deterministic, pixel-perfect interaction via semantic tree extraction and hardware-level actuation — enabling agents to see and interact with the full desktop just like humans.
 
-**Principle:** "Intercept the compositor. Decode the render tree. Agent provides the meaning."
+**Principle:** "Intercept the semantic tree. Deliver coordinates. Agent provides meaning. Handle errors gracefully."
 
 ## Core Concept
 
-OSCP makes agents first-class citizens of operating systems designed for humans.
+OSCP makes agents first-class citizens. No VLMs. No screenshots. No guessing.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -16,74 +16,104 @@ OSCP makes agents first-class citizens of operating systems designed for humans.
 │                                                             │
 │  ┌─────────────────┐    ┌─────────────────┐                │
 │  │  OSCP           │ +  │  Agent Skills   │  = First-Class  │
-│  │  (Geometry)     │    │  (Inference)    │    Citizen      │
+│  │  (Deterministic)│    │  (Inference)    │    Citizen      │
 │  └─────────────────┘    └─────────────────┘                │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### What OSCP Provides
-- Exact geometry: positions, bounds, z-order
-- Window structure: titles, sizes, focus state
-- Render operations (macOS/Linux) or element tree (Windows)
-- Mouse position: cursor and hovered element
-- Real-time stream: 30fps render trees
-
-### What Agent Skills Provide
-- Element types: button vs label vs input
-- Text content: inferred from patterns
-- State detection: enabled, disabled, focused
-- Layout reasoning: toolbar, sidebar, etc.
-- Interaction logic: what's clickable
-
-## Platforms (V1)
-
-| Platform | Method | Coverage | Time | Risk |
-|----------|--------|----------|------|------|
-| **macOS** | CGWindowList (Window Server) | 95% | 2-3 mo | Low |
-| **Linux** | X11 + Compositor Hook | 90-95% | 3-4 mo | Medium |
-| **Windows** | UIA + Win32 | 90% | 1-2 mo | Very Low |
+### Key Properties
+- **Deterministic** — Semantic trees are mathematical facts, not guesses
+- **Low-latency** — <50ms per action vs 1-5s for VLMs
+- **Zero visual parsing** — No screenshots, no pixel analysis
+- **Error-resilient** — Fallback hierarchy ensures agents never get stuck
+- **Hardware-level** — OS cannot distinguish agent from human
 
 ## Per-Platform Approach
 
-### macOS
-- Window Server is the compositor
-- CGWindowListCopyWindowInfo reads layer tree
-- No GPU hooks needed
-- Official, stable API
+### macOS: AXUIElement + Fallbacks
 
-### Linux
-- **Tier 1:** X11 APIs (XQueryTree, XGetWindowProperty)
-  - Covers X11 desktops + Xwayland apps (~85%)
-- **Tier 2:** Compositor OpenGL Hook
-  - Hooks: Mutter, KWin, Sway EGL/OpenGL
-  - Captures native Wayland windows (~5-10% more)
+| Level | Method | Coverage |
+|-------|--------|----------|
+| 1 | AXUIElement | 90% |
+| 2 | CDP (Browser/Electron) | 95% |
+| 3 | Position-only | 95% |
 
-### Windows
-- **Tier 1:** Win32 APIs (EnumWindows, GetWindowRect)
-- **Tier 2:** UI Automation (element types, names, states)
-- Note: No documented API for Windows render ops. UIA + Win32 chosen for stability.
+### Linux: AT-SPI2 + X11 + Fallbacks
+
+| Level | Method | Coverage |
+|-------|--------|----------|
+| 1 | AT-SPI2 | 85% |
+| 2 | X11 (XQueryTree) | 90% |
+| 3 | CDP | 95% |
+| 4 | Heuristics | 95% |
+
+### Windows: UIA + Win32 + Fallbacks
+
+| Level | Method | Coverage |
+|-------|--------|----------|
+| 1 | UIAutomation | 85% |
+| 2 | CDP (Electron/Browser) | 90% |
+| 3 | Win32 (EnumWindows) | 90% |
+| 4 | Position-only | 90% |
+
+## Error Handling: The Empty Tree Problem
+
+When semantic tree is empty or unhelpful:
+
+```
+LEVEL 1: Native Semantic Tree (90% of apps)
+   ↓ works
+LEVEL 2: CDP Bridge (Electron/Browser)
+   ↓ works
+LEVEL 3: Structural Heuristics
+   ↓ works
+LEVEL 4: Position-Only Mode
+   ↓ works
+LEVEL 5: Human Handoff
+```
+
+### Tree Quality Metrics
+
+```json
+{
+  "coverage_score": 0.85,
+  "named_elements": 45,
+  "unlabeled_elements": 3,
+  "confidence": "HIGH"
+}
+```
+
+### Confidence Thresholds
+
+| Confidence | Threshold | Agent Action |
+|------------|-----------|--------------|
+| HIGH | > 0.8 | Execute immediately |
+| MEDIUM | 0.5-0.8 | Execute with monitoring |
+| LOW | 0.3-0.5 | Explore first |
+| NONE | < 0.2 | Human handoff |
 
 ## Coverage
 
-| Platform | Coverage | Gaps |
-|----------|----------|------|
-| **macOS** | 95% | Screen sharing, DRM, sandboxed |
-| **Linux** | 90-95% | Some Wayland compositors, TTY, KMS |
-| **Windows** | 90% | Non-UIA apps, legacy Win32, protected |
+| Platform | Coverage | Blind Spots |
+|----------|----------|-------------|
+| **macOS** | 95% | Screen sharing, DRM |
+| **Linux** | 90-95% | Some Wayland, TTY |
+| **Windows** | 90% | Non-UIA apps, protected |
 
 ## Gaps After V1
 
 | Gap | Fillable? |
 |-----|-----------|
 | Element semantics (macOS/Linux) | ✅ Agent skills |
-| WebGL/Canvas content | ⚠️ Partially |
+| WebGL/Canvas content | ⚠️ Partially via CDP |
 | Color semantics | ✅ Protocol extension |
-| Audio | ✅ Separate API later |
+| Custom renderers | ✅ Position-only mode |
 | Protected content | ❌ OS restriction |
+| Audio | ✅ Separate API later |
 
 ## Status
 
-Phase 0 complete. V1 implementation starting for all three platforms.
+Phase 0 complete. V1 implementation starting for all three platforms with error handling.
 
 ## References
 

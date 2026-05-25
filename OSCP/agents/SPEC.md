@@ -7,7 +7,13 @@
 
 ## Overview
 
-OSCP provides agents with raw render operations from the compositor's scene tree — positions, z-order, texture IDs — enabling agents to see and interact with the full desktop just like humans. Agent provides the meaning.
+OSCP provides agents with deterministic, pixel-perfect desktop interaction via semantic tree extraction and hardware-level actuation. Agent provides the meaning; protocol provides coordinates.
+
+**Key Features:**
+- Deterministic (not probabilistic like VLMs)
+- Error-resilient (fallback hierarchy)
+- Confidence scoring on every element and action
+- Human handoff for edge cases
 
 ---
 
@@ -36,92 +42,129 @@ Agent                          OSCP Driver
 
 ## Data Received by Agent
 
-### Render Tree Structure
-
-Every frame sent by OSCP to the agent contains:
+### Standard Render Tree
 
 ```json
 {
   "type": "render_tree",
   "frame_id": 12345,
   "timestamp": 1716576000000,
+  "platform": "linux",
   "windows": [
     {
-      "id": "win_abc123",
-      "title": "Visual Studio Code",
+      "id": "win_0x400001",
+      "title": "VS Code",
       "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
       "position": {"x": 100, "y": 50},
       "focused": true,
-      "ops": [
+      "elements": [
         {
-          "id": "op_001",
-          "bounds": {"x": 10, "y": 10, "w": 100, "h": 30},
-          "z": 1,
-          "texture_id": "0xAA01"
-        },
-        {
-          "id": "op_002",
-          "bounds": {"x": 120, "y": 10, "w": 80, "h": 30},
-          "z": 2,
-          "texture_id": "0xAA02"
+          "id": "e_001",
+          "type": "button",
+          "name": "Save",
+          "bounds": {"x": 1750, "y": 5, "w": 80, "h": 25},
+          "state": ["enabled", "visible"],
+          "confidence": 0.95,
+          "source": "atspi"
         }
       ]
     }
   ],
+  "tree_analysis": {
+    "coverage_score": 0.9,
+    "named_elements": 150,
+    "unlabeled_elements": 12,
+    "confidence": "HIGH"
+  },
   "mouse": {
-    "x": 150,
-    "y": 25,
-    "hovered_op_id": "op_002"
+    "x": 540,
+    "y": 320,
+    "hovered_element_id": "e_042"
   }
 }
 ```
 
-### Window
+### Fallback Render Tree (Empty Tree)
 
-A window represents a visible surface in the compositor scene.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique identifier |
-| `title` | string | Window title |
-| `bounds` | object | Window size (w, h) |
-| `position` | object | Window position (x, y) |
-| `focused` | boolean | Is window focused |
-| `ops` | array | Render operations in this window |
-
-### Render Operation
-
-A render operation represents a draw call from the compositor.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique identifier within frame |
-| `bounds` | object | Position (x, y) and size (w, h) |
-| `z` | number | Z-index (render order, higher = on top) |
-| `texture_id` | string | Texture identifier |
-| `clip_bounds` | object | Optional clipping rectangle |
-
-### Mouse
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `x` | number | Cursor X position |
-| `y` | number | Cursor Y position |
-| `hovered_op_id` | string | Render op under cursor (if any) |
+```json
+{
+  "type": "render_tree",
+  "frame_id": 12346,
+  "platform": "windows",
+  "windows": [
+    {
+      "id": "win_0x500001",
+      "title": "CustomGame",
+      "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
+      "elements": [],
+      "fallback_active": true,
+      "fallback_method": "position_only",
+      "fallback_reason": "custom_renderer_detected"
+    }
+  ],
+  "tree_analysis": {
+    "coverage_score": 0.05,
+    "named_elements": 0,
+    "unlabeled_elements": 1,
+    "confidence": "NONE",
+    "recommended_action": "human_handoff"
+  },
+  "mouse": {
+    "x": 540,
+    "y": 320,
+    "hovered_element_id": null
+  }
+}
+```
 
 ---
 
-## What Agent Infers
+## Confidence-Based Decision Making
 
-Agent receives raw geometry from the compositor. Agent provides:
+### Tree Quality Thresholds
 
-| What Agent Deduces | How |
-|-------------------|-----|
-| Element type (button, label, input) | From position, size, z-order patterns |
-| Clickable regions | From z-order and texture patterns |
-| Text content | From texture patterns and surrounding elements |
-| Element state | From mouse position and recent actions |
-| Layout structure | From bounds and z-order relationships |
+| Confidence | Threshold | Agent Action |
+|------------|-----------|--------------|
+| **HIGH** | > 0.8 | Execute immediately |
+| **MEDIUM** | 0.5-0.8 | Execute with monitoring |
+| **LOW** | 0.3-0.5 | Explore first, then execute |
+| **NONE** | < 0.2 | Human handoff |
+
+### Agent Decision Logic
+
+```python
+async def click_element(element):
+    if element.confidence > 0.8:
+        # HIGH confidence - execute immediately
+        return await execute_click(element.bounds)
+    
+    elif element.confidence > 0.5:
+        # MEDIUM confidence - execute with monitoring
+        before_state = capture_state()
+        result = await execute_click(element.bounds)
+        after_state = capture_state()
+        
+        if state_changed(before_state, after_state):
+            return result  # Success
+        else:
+            return await explore_and_retry(element)  # Failed, explore
+    
+    elif element.confidence > 0.2:
+        # LOW confidence - explore first
+        candidates = find_similar_elements(element)
+        for candidate in candidates:
+            result = await try_element(candidate)
+            if success(result):
+                return result
+        return human_handoff("All candidates failed")
+    
+    else:
+        # NONE confidence - human handoff
+        return await human_handoff(
+            reason="No confidence in element location",
+            alternatives=element.alternatives
+        )
+```
 
 ---
 
@@ -135,81 +178,10 @@ Agent receives raw geometry from the compositor. Agent provides:
   "action_id": "act_001",
   "action": {
     "kind": "click",
-    "x": 50,
-    "y": 25,
+    "x": 1750,
+    "y": 17,
     "button": "left",
     "click_type": "single"
-  }
-}
-```
-
-### Move
-
-```json
-{
-  "type": "action",
-  "action_id": "act_002",
-  "action": {
-    "kind": "move",
-    "x": 100,
-    "y": 200
-  }
-}
-```
-
-### Drag
-
-```json
-{
-  "type": "action",
-  "action_id": "act_003",
-  "action": {
-    "kind": "drag",
-    "start_x": 100,
-    "start_y": 200,
-    "end_x": 300,
-    "end_y": 400,
-    "button": "left"
-  }
-}
-```
-
-### Scroll
-
-```json
-{
-  "type": "action",
-  "action_id": "act_004",
-  "action": {
-    "kind": "scroll",
-    "delta_x": 0,
-    "delta_y": -3
-  }
-}
-```
-
-### Type
-
-```json
-{
-  "type": "action",
-  "action_id": "act_005",
-  "action": {
-    "kind": "type",
-    "text": "hello world"
-  }
-}
-```
-
-### Key Press
-
-```json
-{
-  "type": "action",
-  "action_id": "act_006",
-  "action": {
-    "kind": "key_press",
-    "key": "enter"
   }
 }
 ```
@@ -219,7 +191,7 @@ Agent receives raw geometry from the compositor. Agent provides:
 ```json
 {
   "type": "action",
-  "action_id": "act_007",
+  "action_id": "act_002",
   "action": {
     "kind": "key_combo",
     "key": "s",
@@ -228,166 +200,233 @@ Agent receives raw geometry from the compositor. Agent provides:
 }
 ```
 
----
+### Type
 
-## Event Types
-
-Agents receive system events from the compositor.
-
-| Event | Description |
-|-------|-------------|
-| `window_opened` | New window appeared |
-| `window_closed` | Window removed |
-| `window_focused` | Window gained focus |
-| `window_unfocused` | Window lost focus |
-| `window_moved` | Window position changed |
-| `window_resized` | Window size changed |
-| `key_pressed` | Keyboard input received |
-| `mouse_moved` | Mouse moved |
-| `mouse_clicked` | Mouse button pressed |
-| `scroll` | Scroll event |
-
----
-
-## Agent SDKs
-
-### Supported Agents
-
-| Agent | Language | SDK Location |
-|-------|----------|---------------|
-| OpenClaw | Python | `agents/openclaw/` |
-| HermesAgent | TypeScript | `agents/hermes/` |
-| PyAgent | Python | `agents/pyagent/` |
-
-### SDK Interface
-
-```python
-import oscp
-
-# Connect to OSCP driver
-client = oscp.connect("tcp://localhost:9876")  # Windows
-# or
-client = oscp.connect("unix:///tmp/oscp.sock")  # macOS/Linux
-
-# Receive render tree stream
-async for tree in client.stream():
-    for window in tree.windows:
-        print(f"Window: {window.title}")
-        
-        # Iterate over render operations (raw geometry)
-        for op in window.ops:
-            print(f"  rect: {op.bounds}, z: {op.z}, texture: {op.texture_id}")
-
-# Perform action
-result = client.click(x=100, y=200)
+```json
+{
+  "type": "action",
+  "action_id": "act_003",
+  "action": {
+    "kind": "type",
+    "text": "hello world"
+  }
+}
 ```
 
-```typescript
-import { createOSCPClient } from 'oscp-sdk';
+---
 
-const client = createOSCPClient('tcp://localhost:9876');
+## Action Results
 
-const connection = await client.connect();
+### Success
 
-connection.on('render_tree', (tree) => {
-    for (const window of tree.windows) {
-        console.log(`Window: ${window.title}`);
-        
-        for (const op of window.ops) {
-            console.log(`  rect: ${op.bounds}, z: ${op.z}`);
-        }
-    }
-});
+```json
+{
+  "type": "action_result",
+  "action_id": "act_001",
+  "success": true,
+  "confidence": 0.95,
+  "source": "atspi",
+  "error": null
+}
+```
 
-const result = await client.click({ x: 100, y: 200 });
+### Failure with Alternatives
+
+```json
+{
+  "type": "action_result",
+  "action_id": "act_002",
+  "success": false,
+  "confidence": 0.2,
+  "source": "heuristic",
+  "error": {
+    "code": "EMPTY_TREE",
+    "message": "Semantic tree empty",
+    "reasoning": "Custom renderer detected, no element names",
+    "alternatives": [
+      {"bounds": {"x": 1700, "y": 5}, "confidence": 0.3},
+      {"bounds": {"x": 1750, "y": 5}, "confidence": 0.2},
+      {"bounds": {"x": 1800, "y": 5}, "confidence": 0.1}
+    ],
+    "recommended_action": "explore_and_confirm"
+  }
+}
 ```
 
 ---
 
 ## Error Handling
 
-### Action Failures
+### Tree Analysis Response
+
+Agent receives `tree_analysis` with every frame:
 
 ```json
 {
-  "type": "action_result",
-  "action_id": "act_001",
-  "success": false,
-  "error": {
-    "code": "WINDOW_NOT_FOUND",
-    "message": "Window win_0x99999 not found",
-    "recoverable": true
+  "tree_analysis": {
+    "coverage_score": 0.05,
+    "named_elements": 0,
+    "unlabeled_elements": 1,
+    "avg_depth": 1,
+    "confidence": "NONE",
+    "recommended_action": "human_handoff"
   }
 }
 ```
 
-### Recovery Strategies
+### Agent Response to Poor Tree Quality
 
-| Error | Recovery |
-|-------|----------|
-| `WINDOW_NOT_FOUND` | Refresh window list, retry |
-| `ACTION_FAILED` | Retry with exponential backoff |
-| `TRANSPORT_ERROR` | Reconnect |
-| `TIMEOUT` | Retry |
+```python
+async def handle_low_quality(tree_analysis):
+    if tree_analysis.confidence == "NONE":
+        # Custom renderer or protected content
+        if tree_analysis.fallback_method == "position_only":
+            # Agent must explore and learn
+            await enter_exploration_mode()
+        else:
+            # Escalate to human
+            await human_handoff(
+                reason="Cannot access UI elements",
+                alternatives=[]
+            )
+    
+    elif tree_analysis.confidence == "LOW":
+        # Many unlabeled elements
+        # Agent uses heuristics and position
+        await.enter_heuristic_mode()
+```
 
 ---
 
-## Transport Options
+## Agent SDKs
 
-### TCP (Windows default)
-
-```python
-client = oscp.connect("tcp://localhost:9876")
-```
-
-### Unix Socket (macOS/Linux default)
+### Python SDK
 
 ```python
+import oscp
+
+# Connect
 client = oscp.connect("unix:///tmp/oscp.sock")
+
+# Stream with quality checking
+async for tree in client.stream():
+    # Check tree quality
+    if tree.tree_analysis.confidence == "HIGH":
+        # Safe to execute immediately
+        for window in tree.windows:
+            for element in window.elements:
+                if element.name == "Save" and element.confidence > 0.8:
+                    await client.click(element.bounds)
+    
+    elif tree.tree_analysis.confidence == "LOW":
+        # Use heuristics
+        await client.explore_and_confirm(element)
+    
+    else:
+        # Human handoff
+        await client.human_handoff("Cannot identify target")
 ```
 
-### Stdio (embedded mode)
+### TypeScript SDK
 
-```python
-client = oscp.connect("stdio:")
-```
+```typescript
+import { createOSCPClient } from 'oscp-sdk';
 
-### WebSocket
+const client = createOSCPClient('unix:///tmp/oscp.sock');
 
-```python
-client = oscp.connect("ws://localhost:9876")
+client.on('render_tree', (tree) => {
+    if (tree.tree_analysis.confidence === 'HIGH') {
+        for (const window of tree.windows) {
+            for (const element of window.elements) {
+                if (element.name === 'Save' && element.confidence > 0.8) {
+                    client.click(element.bounds);
+                }
+            }
+        }
+    }
+});
 ```
 
 ---
 
 ## Best Practices
 
-### 1. Frame Rate
+### 1. Always Check Confidence
 
-Match frame rate to use case:
-- **Interactive UI:** 30fps
-- **Static content:** 10fps
-- **Video/animation:** 60fps
+```python
+# Don't assume element is clickable
+if element.confidence > 0.8:
+    await execute()
+else:
+    await explore_first()
+```
 
-### 2. Operation Caching
+### 2. Use Alternatives on Failure
 
-Cache operation references between frames. Operations are stable unless window changes.
+```python
+result = await execute(element)
+if not result.success:
+    for alternative in result.error.alternatives:
+        if alternative.confidence > 0.3:
+            result = await execute(alternative)
+            if result.success:
+                break
+```
 
-### 3. Action Batching
+### 3. Learn from Failures
 
-For complex sequences, batch actions and use `action_delay_ms` to ensure visual feedback.
+```python
+async def on_action_failure(result):
+    if result.source == "heuristic":
+        # Record what didn't work
+        await record_failed_position(result.target)
+        # Try human handoff if multiple failures
+        if failure_count > 3:
+            await human_handoff()
+```
 
-### 4. Error Recovery
+### 4. Monitor State Changes
 
-Always implement retry logic with exponential backoff. OSCP is designed for reliability, but network issues can occur.
+```python
+async def execute_with_monitoring(element):
+    before = capture_state()
+    result = await execute(element)
+    after = capture_state()
+    
+    if not state_changed(before, after):
+        # Action didn't have visible effect
+        # Consider alternative or explore
+        return await explore_and_confirm(element)
+    
+    return result
+```
+
+---
+
+## Human Handoff Protocol
+
+```json
+{
+  "type": "handoff_request",
+  "reason": "Cannot identify Save button",
+  "reasoning": "Custom renderer detected, no element names",
+  "attempts": 3,
+  "options": [
+    "Click at position (1750, 5) based on toolbar pattern",
+    "Click at position (960, 540) center of window",
+    "Skip this step",
+    "Click manually and I'll learn from it"
+  ]
+}
+```
 
 ---
 
 ## Principle
 
-> "Intercept the compositor. Decode the render tree. Agent provides the meaning."
+> "Intercept the semantic tree. Deliver coordinates. Agent provides meaning. Handle errors gracefully."
 
-Agent receives positions, z-order, and texture IDs from the compositor's scene tree. Agent figures out what it all means. No pixels. No VLM.
+Agent receives deterministic coordinates with confidence. Agent supplies semantics. Fallback hierarchy ensures agent never gets stuck.
 
 ---
 

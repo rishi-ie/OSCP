@@ -7,323 +7,349 @@
 
 ## Overview
 
-The Linux platform driver provides OSCP protocol implementation for Linux distributions. It intercepts the X11/Wayland compositor at the OS level and delivers raw render operations to agents.
+The Linux platform driver provides OSCP protocol implementation for Linux distributions. It uses AT-SPI2 with X11 fallback and a comprehensive fallback hierarchy for problematic apps.
 
-**Principle:** Intercept the compositor. Decode the render tree. Agent provides the meaning.
-
----
-
-## Compositor Architecture
-
-### X11
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     APPS                                        │
-│                                                                 │
-│   App A (GTK) ─────┐                                            │
-│   App B (Qt)      ─┼─ RENDER ─► X11 REQUESTS ─►                 │
-│   App C (SDL)     ─┘                                           │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      X11 SERVER                                 │
-│                                                                 │
-│   ┌─────────────────────────────────────────────────────────┐   │
-│   │                    WINDOW TREE                          │   │
-│   │                                                         │   │
-│   │   Window 1 ──► Properties ──► Compositor                 │   │
-│   │   Window 2 ──► Properties ──► Compositor                 │   │
-│   │   Window 3 ──► Properties ──► Compositor                 │   │
-│   │                                                         │   │
-│   │            ┌──────────────────────┐                      │   │
-│   │            │   WINDOW TREE        │                      │   │
-│   │            │   (intercept here)   │                      │   │
-│   │            └──────────────────────┘                      │   │
-│   │                                                         │   │
-│   │            INTERCEPT ─► DECODE ─► AGENT                  │   │
-│   └─────────────────────────────────────────────────────────┘   │
-│                             │                                   │
-│                             ▼                                   │
-│                      DISPLAY OUTPUT                             │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Wayland
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     APPS                                        │
-│                                                                 │
-│   App A (GTK4) ────┐                                           │
-│   App B (Qt)      ─┼─ RENDER ─► WAYLAND PROTOCOL ─►            │
-│   App C (SDL)     ─┘                                           │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   WAYLAND COMPOSITOR                           │
-│                                                                 │
-│   ┌─────────────────────────────────────────────────────────┐   │
-│   │                    SURFACE TREE                         │   │
-│   │                                                         │   │
-│   │   Surface 1 ──► wl_surface ──► Compositor               │   │
-│   │   Surface 2 ──► wl_surface ──► Compositor               │   │
-│   │   Surface 3 ──► wl_surface ──► Compositor               │   │
-│   │                                                         │   │
-│   │            ┌──────────────────────┐                      │   │
-│   │            │   SURFACE TREE       │                      │   │
-│   │            │   (intercept here)   │                      │   │
-│   │            └──────────────────────┘                      │   │
-│   │                                                         │   │
-│   │            INTERCEPT ─► DECODE ─► AGENT                  │   │
-│   └─────────────────────────────────────────────────────────┘   │
-│                             │                                   │
-│                             ▼                                   │
-│                      DISPLAY OUTPUT                             │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Intercept Approach
-
-### Why Not Per-App Hook?
-
-Per-app OpenGL/Vulkan hook misses:
-- GTK/Qt apps (X11/Wayland rendering)
-- Games with different renderers
-- Legacy X11 apps
-
-**OSCP intercepts the X11/Wayland compositor instead — one point, all apps.**
-
-### X11 Intercept Methods
-
-| Method | Description | Coverage |
-|--------|-------------|----------|
-| **XQueryTree** | Window hierarchy | Metadata only |
-| **XDamage** | Change tracking | Efficient updates |
-| **XFixes** | Region operations | Clip bounds |
-| **Shared memory pixmap** | Texture content | Partial render data |
-
-### Wayland Intercept Methods
-
-| Method | Description | Coverage |
-|--------|-------------|----------|
-| **xdg-decoration** | Window decorations | Metadata |
-| **wl_viewport** | Surface regions | Clip bounds |
-| **wl_subcompositor** | Surface hierarchy | Z-order |
-| **DMABUF** | Buffer interception | Texture data |
-
-### Approach: Compositor Scene Graph
-
-The compositor maintains a scene graph of all surfaces. We intercept this:
-
-**X11:**
-```rust
-// Conceptual approach
-struct X11CompositorInterceptor {
-    // Hook into X11 server's window tree
-    // Extract window properties and regions
-    // Decode render operations from damage/compositor
-    
-    fn capture_scene() -> RenderTree {
-        // Query all top-level windows
-        // Get window properties (bounds, name, class)
-        // Track damage regions for changes
-        // Build render tree with positions and z-order
-    }
-}
-```
-
-**Wayland:**
-```rust
-// Conceptual approach
-struct WaylandCompositorInterceptor {
-    // Hook into Wayland compositor protocols
-    // Extract surface hierarchy
-    // Decode render operations from compositor
-    
-    fn capture_scene() -> RenderTree {
-        // Get all surfaces from compositor
-        // Query surface properties (bounds, role, parent)
-        // Track buffer commits for changes
-        // Build render tree with positions and z-order
-    }
-}
-```
+**Principle:** Deterministic. Error-resilient. Graceful degradation.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
+┌─────────────────────────────────────────────────────────────┐
 │                     Platform Driver                             │
 │                                                                 │
-│  ┌───────────────┐           ┌───────────────┐                  │
-│  │  X11/Wayland  │           │  Input Engine │                  │
-│  │  Compositor   │           │  (Rust)       │                  │
-│  │  Interceptor  │           │               │                  │
-│  │  (Rust)       │           │               │                  │
-│  └───────┬───────┘           └───────┬───────┘                  │
-│          │                           │                          │
-│          └──────────┬────────────────┘                          │
-│                     │                                          │
-│              ┌──────▼──────┐                                   │
-│              │  Render    │                                   │
-│              │  Decoder   │                                   │
-│              │  (Rust)    │                                   │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │   AT-SPI2    │  │     X11      │  │   Input Engine   │   │
+│  │  Accessibility │  │   Window Enum │  │   (/dev/uinput) │   │
+│  └───────┬──────┘  └───────┬──────┘  └────────┬─────────┘   │
+│          │                 │                  │               │
+│          └──────────┬──────┘                  │               │
+│                     │                         │               │
+│              ┌──────▼──────┐                   │               │
+│              │    Tree     │◄──────────────────┘               │
+│              │   Builder   │                                   │
+│              │   + Error   │                                   │
+│              │   Handler   │                                   │
 │              └──────┬──────┘                                   │
 │                     │                                          │
 │              ┌──────▼──────┐                                   │
 │              │  Protocol   │                                   │
 │              │  Server     │                                   │
-│              │  (Unix/TCP) │                                   │
+│              │  (Unix)     │                                   │
 │              └─────────────┘                                   │
-└─────────────────────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Components
+## Primary Capture: AT-SPI2
 
-### 1. X11/Wayland Compositor Interceptor (Rust)
+### What It Captures
 
-**Purpose:** Intercept the compositor's scene graph.
-
-**What it captures:**
-- All visible windows/surfaces
-- Window metadata (title, bounds, class)
-- Compositor z-order and transforms
-- Render regions and damage
-
-**X11 Output:**
-```json
-{
-  "windows": [
-    {
-      "id": "win_0x1000001",
-      "title": "Visual Studio Code",
-      "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
-      "position": {"x": 100, "y": 50},
-      "focused": true,
-      "ops": [
-        {
-          "id": "op_001",
-          "bounds": {"x": 10, "y": 10, "w": 100, "h": 30},
-          "z": 1,
-          "texture_id": "pixmap_0x100"
-        }
-      ]
-    }
-  ]
+```rust
+// AT-SPI2 via D-Bus:
+struct AT_SPIElement {
+    role: String,           // ROLE_BUTTON, ROLE_MENU, etc.
+    name: String,           // Accessible name
+    description: String,    // Accessible description
+    bounds: Rect,           // Position and size
+    states: Vec<State>,     // STATE_ENABLED, etc.
+    relations: Vec<Relation>, // Labeled-by, etc.
+    children: Vec<AT_SPIElement>,
 }
 ```
 
-### 2. Render Decoder (Rust)
-
-**Purpose:** Decode the compositor scene into render operations.
-
-**Pipeline:**
-```
-X11:
-1. Query root window tree
-   ↓
-2. Enumerate all top-level windows
-   ↓
-3. Get window properties and regions
-   ↓
-4. Track damage for changes
-   ↓
-5. Build render tree
-   ↓
-6. Output render operations
-
-Wayland:
-1. Get all surfaces from compositor
-   ↓
-2. Query surface properties
-   ↓
-3. Track buffer commits
-   ↓
-4. Build render tree
-   ↓
-5. Output render operations
-```
-
-### 3. Input Engine (Rust)
-
-**Purpose:** Execute agent actions on Linux.
-
-**X11 Input:**
-```rust
-// XTest extension
-XTestFakeKeyEvent(display, keycode, is_press, 0);
-XFlush(display);
-```
-
-**Wayland Input:**
-```rust
-// Via wl_seat keyboard/mouse
-keyboard.add_key(key, state);
-seat.pointer.motion(x, y);
-```
-
-**Supported Actions:**
-- Mouse: click, double-click, move, drag, scroll
-- Keyboard: type, key press, key combo
-
----
-
-## Multi-Environment Support
-
-### Desktop Environment Detection
-
-```rust
-enum DesktopEnvironment {
-    GNOME,      // Mutter compositor
-    KDE,        // KWin compositor
-    Xfce,       // Xfwm compositor
-    LXDE,       // Openbox
-    MATE,       // Marco compositor
-    Cinnamon,   // Muffin compositor
-    Unknown,
-}
-
-fn detect_des() -> DesktopEnvironment {
-    // Check DESKTOP_SESSION, XDG_CURRENT_DESKTOP
-}
-```
-
-### Wayland Compositors
-
-| Compositor | Environment | Intercept Method |
-|------------|-------------|------------------|
-| Mutter | GNOME | Extended API |
-| KWin | KDE | DBus / scripting |
-| Sway | i3-based | i3ipc |
-| Weston | Generic | Protocol introspection |
-| Hyprland | Custom | Custom API |
-
----
-
-## Coverage
+### Coverage
 
 | App Type | Works? | Notes |
 |----------|--------|-------|
-| X11 apps (GTK, Qt) | ✅ Yes | Via X11 server |
-| Wayland native apps | ✅ Yes | Via compositor |
-| OpenGL/Vulkan games | ✅ Yes | Captured at compositor |
-| Xwayland apps | ✅ Yes | Bridged via X11 |
-| Terminal apps | ✅ Yes | Via X11/Wayland |
-| TTY | ❌ No | No compositor |
-| Wayland (no protocol) | ❌ No | Requires compositor support |
+| GTK apps | ✅ | Full AT-SPI2 support |
+| Qt apps | ✅ | Full AT-SPI2 support |
+| Java Swing | ⚠️ | If AT-SPI enabled |
+| Electron | ⚠️ | Basic support |
+| SDL/GL apps | ❌ | No AT-SPI |
 
-**Coverage: ~90% of desktop apps**
+**Primary Coverage: ~85%**
+
+---
+
+## Fallback Hierarchy
+
+### Level 1: AT-SPI2 (Primary)
+
+```rust
+fn capture_atspi() -> Result<ElementTree> {
+    // Connect to at-spi-bus
+    // Enumerate all applications
+    // Extract element tree for each window
+    // Returns full semantic tree
+}
+```
+
+### Level 2: X11 (X11 Desktops + Xwayland)
+
+```rust
+fn capture_x11() -> PartialTree {
+    // XQueryTree for window hierarchy
+    // XGetWindowProperty for metadata
+    // XGetWindowAttributes for bounds
+    // Covers: X11 desktops, Xwayland apps
+    // ~85% of Wayland desktops via Xwayland
+}
+```
+
+### Level 3: CDP Bridge (Electron/Browser)
+
+```rust
+async fn capture_cdp(app: &str) -> Result<ElementTree> {
+    // Connect to Chrome/Electron CDP port
+    // Extract DOM tree with bounding boxes
+    // Covers: Chrome, Firefox, Electron apps
+}
+```
+
+### Level 4: Structural Heuristics
+
+```rust
+fn heuristics(window: &Window) -> InferredElements {
+    // Even if tree is empty, we get window bounds
+    // Infer common UI patterns:
+    // - Toolbar at top, small height
+    // - Sidebar at left, vertical items
+    // - Modal centered, high z-order
+    
+    // Works for: Custom UIs with standard layouts
+}
+```
+
+### Level 5: Position-Only Mode
+
+```rust
+fn position_only(window: &Window) -> EmptyTree {
+    // Return window bounds only
+    // Agent must learn through exploration
+    // Triggered when coverage_score < 0.3
+}
+```
+
+### Level 6: Human Handoff
+
+```rust
+fn human_handoff(reason: &str, attempts: u32) -> HandoffRequest {
+    // Report failure
+    // Ask for guidance
+}
+```
+
+---
+
+## X11 + Wayland Dual Strategy
+
+### X11 (Universal)
+
+```rust
+fn capture_x11(display: &X11Display) -> Vec<WindowInfo> {
+    // XQueryTree - window hierarchy
+    // XGetWindowProperty - titles, classes
+    // XGetWindowAttributes - positions, sizes
+    // XDamage - change tracking
+    // Works on: X11 desktops (70% of Linux)
+    // Works on: Xwayland apps on Wayland desktops (95% of apps)
+}
+```
+
+### Wayland Compositor Detection
+
+```rust
+enum WaylandCompositor {
+    Gnome,  // Mutter
+    KDE,    // KWin
+    Sway,
+    River,
+    Hyprland,
+    Weston,
+    Unknown,
+}
+
+fn detect_compositor() -> WaylandCompositor {
+    // Check XDG_CURRENT_DESKTOP
+    // Check WAYLAND_DISPLAY
+    // Return compositor type
+}
+```
+
+### Wayland Native Support (Per Compositor)
+
+```rust
+async fn capture_wayland_native(compositor: WaylandCompositor) 
+    -> Option<ElementTree> 
+{
+    match compositor {
+        Gnome => capture_gnome_shell().await,
+        KDE => capture_kwin().await,
+        Sway => capture_sway_ipc().await,
+        _ => None,  // Fall back to X11/Xwayland
+    }
+}
+```
+
+**Wayland Native Coverage: ~5-10% additional**
+
+---
+
+## Error Detection
+
+### Tree Quality Analysis
+
+```rust
+struct TreeAnalysis {
+    coverage_score: f32,      // 0.0-1.0
+    named_elements: u32,
+    unlabeled_elements: u32,
+    avg_depth: f32,
+    confidence: Confidence,
+}
+
+enum Confidence {
+    HIGH,    // > 0.8
+    MEDIUM,  // 0.5-0.8
+    LOW,     // 0.3-0.5
+    NONE,    // < 0.2
+}
+```
+
+### Detection Triggers
+
+```rust
+fn analyze_tree(tree: &ElementTree) -> TreeAnalysis {
+    let named_ratio = tree.named_count as f32 / tree.total_count as f32;
+    let coverage = tree.covered_area / tree.window_area;
+    
+    if coverage < 0.3 {
+        return TreeAnalysis {
+            confidence: Confidence::NONE,
+            recommended_fallback: "position_only"
+        };
+    }
+    
+    if named_ratio < 0.5 {
+        return TreeAnalysis {
+            confidence: Confidence::LOW,
+            recommended_fallback: "heuristics"
+        };
+    }
+    
+    // Custom renderer detection
+    if tree.avg_depth < 2.0 && tree.named_count < 5 {
+        return TreeAnalysis {
+            confidence: Confidence::NONE,
+            recommended_fallback: "x11_position_only"
+        };
+    }
+    
+    // ...
+}
+```
+
+---
+
+## Output Format
+
+### Standard Frame (AT-SPI2)
+
+```json
+{
+  "type": "render_tree",
+  "platform": "linux",
+  "windows": [
+    {
+      "id": "win_0x400001",
+      "title": "VS Code",
+      "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
+      "position": {"x": 100, "y": 50},
+      "focused": true,
+      "elements": [
+        {
+          "id": "e_001",
+          "type": "button",
+          "name": "Save",
+          "bounds": {"x": 1750, "y": 5, "w": 80, "h": 25},
+          "state": ["enabled", "visible"],
+          "confidence": 0.95,
+          "source": "atspi"
+        }
+      ]
+    }
+  ],
+  "tree_analysis": {
+    "coverage_score": 0.9,
+    "named_elements": 150,
+    "unlabeled_elements": 12,
+    "confidence": "HIGH"
+  }
+}
+```
+
+### Fallback Frame
+
+```json
+{
+  "type": "render_tree",
+  "platform": "linux",
+  "windows": [
+    {
+      "id": "win_0x500001",
+      "title": "CustomGame",
+      "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
+      "elements": [],
+      "fallback_active": true,
+      "fallback_method": "position_only",
+      "fallback_reason": "custom_renderer_detected"
+    }
+  ],
+  "tree_analysis": {
+    "coverage_score": 0.05,
+    "named_elements": 0,
+    "confidence": "NONE",
+    "recommended_action": "human_handoff"
+  }
+}
+```
+
+---
+
+## Action Result with Confidence
+
+```json
+{
+  "type": "action_result",
+  "action_id": "act_001",
+  "success": true,
+  "confidence": 0.95,
+  "source": "atspi",
+  "error": null
+}
+```
+
+```json
+{
+  "type": "action_result",
+  "action_id": "act_002",
+  "success": false,
+  "confidence": 0.2,
+  "source": "heuristic",
+  "error": {
+    "code": "EMPTY_TREE",
+    "message": "Semantic tree empty",
+    "reasoning": "SDL renderer detected, no AT-SPI",
+    "alternatives": [
+      {"bounds": {"x": 960, "y": 540}, "confidence": 0.3}
+    ],
+    "recommended_action": "explore_and_confirm"
+  }
+}
+```
 
 ---
 
@@ -332,14 +358,6 @@ fn detect_des() -> DesktopEnvironment {
 ### Transport
 
 Default: `unix:///tmp/oscp.sock`
-Alternative: `tcp://localhost:9876`
-
-### Message Framing
-
-Length-prefixed JSON:
-```
-[4-byte big-endian length][JSON payload]
-```
 
 ### Capabilities
 
@@ -347,12 +365,20 @@ Length-prefixed JSON:
 {
   "platform": "linux",
   "driver": "oscp-linux-v0.2",
-  "compositor": "x11_wayland",
-  "capabilities": ["render_tree", "actions", "events"],
-  "features": {
-    "compositor_intercept": true,
+  "semantic_apis": ["atspi2", "x11"],
+  "fallback_methods": ["cdp", "heuristics", "position_only", "human_handoff"],
+  "compositor_support": {
     "x11": true,
-    "wayland": true,
+    "gnome": true,
+    "kde": true,
+    "sway": true,
+    "other": false
+  },
+  "capabilities": ["render_tree", "actions", "events", "error_handling"],
+  "features": {
+    "element_tree": true,
+    "cdp_bridge": true,
+    "heuristics": true,
     "multi_window": true,
     "multi_monitor": true
   }
@@ -361,12 +387,9 @@ Length-prefixed JSON:
 
 ---
 
-## Installation & Startup
-
-### Installation
+## Installation
 
 ```bash
-# Single command install (V1 target)
 # apt
 sudo apt install oscp
 
@@ -377,59 +400,24 @@ sudo dnf install oscp
 yay -S oscp
 ```
 
-### Startup
-
-1. OSCP driver starts as systemd user service
-2. Driver detects display server (X11/Wayland)
-3. Agent connects via Unix socket
-4. Render tree streaming begins
-
 ---
 
-## Configuration
+## System Requirements
 
-```json
-{
-  "linux": {
-    "capture": {
-      "frame_rate": 30,
-      "display_server": "auto",
-      "compositor": "x11_wayland"
-    },
-    "input": {
-      "method": "xtest",
-      "action_delay_ms": 0
-    },
-    "compatibility": {
-      "desktop_environment": "auto",
-      "fallback_to_x11": true
-    }
-  }
-}
-```
-
----
-
-## Limitations
-
-| Limitation | Description |
-|------------|-------------|
-| TTY | No compositor access |
-| Wayland | Depends on compositor support |
-| Some games | DRM or anti-cheat |
-| Nested Wayland | Limited support |
+- AT-SPI2 daemon running (`at-spi2-arc` package)
+- X11 or Wayland compositor
+- Accessibility enabled in desktop environment
 
 ---
 
 ## Status
 
-🚧 **V1 Target:** X11 compositor interception + render tree + actions
+🚧 **V1 Target:** AT-SPI2 + X11 + fallback hierarchy
 
 ---
 
 ## References
 
+- [AT-SPI2 Specification](https://www.freedesktop.org/wiki/Accessibility/)
 - [X11 Protocol](https://www.x.org/docs/X11/x11protocol.pdf)
-- [X Damage Extension](https://www.x.org/releases/X11R7.7/doc/kb/xwd.pdf)
-- [Wayland Protocols](https://wayland.freedesktop.org/)
 - [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots)

@@ -9,27 +9,17 @@
 
 > Make agents first-class citizens of operating systems designed for humans.
 
-OSCP intercepts the compositor's render pipeline at the OS level and delivers raw geometry to agents. No pixels. No screenshots. No VLM dependency.
+OSCP intercepts the OS's semantic tree and delivers deterministic, pixel-perfect interaction to agents. No VLMs. No screenshots. No guessing.
 
 ---
 
 ## Principle
 
-> "Intercept the compositor. Decode the render tree. Agent provides the meaning."
+> "Intercept the semantic tree. Deliver coordinates. Agent provides meaning. Handle errors gracefully."
 
 ---
 
-## Scope (V1)
-
-| Platform | Approach | Coverage | Time | Risk |
-|----------|----------|----------|------|------|
-| **macOS** | CGWindowList (Window Server) | 95% | 2-3 mo | Low |
-| **Linux** | X11 + Compositor Hook | 90-95% | 3-4 mo | Medium |
-| **Windows** | UIA + Win32 | 90% | 1-2 mo | Very Low |
-
----
-
-## Architecture
+## Core Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -40,12 +30,17 @@ OSCP intercepts the compositor's render pipeline at the OS level and delivers ra
 │     "windows": [{                                               │
 │       "id": "win_1",                                            │
 │       "title": "VS Code",                                       │
-│       "ops": [{"id": "op_1", "bounds": {...}, "z": 0}]         │
+│       "elements": [{                                             │
+│         "type": "button",                                        │
+│         "name": "Save",                                         │
+│         "bounds": {"x": 1750, "y": 5, "w": 80, "h": 25},       │
+│         "confidence": 0.95                                      │
+│       }]                                                        │
 │     }],                                                         │
 │     "mouse": {"x": 540, "y": 320}                              │
 │   }                                                            │
 │                                                                 │
-│   Agent sends: {"action": "click", "x": 100, "y": 200}         │
+│   Agent sends: {"action": "click", "x": 1750, "y": 20}         │
 └─────────────────────────────────────────────────────────────┘
                              │
                        OSCP Protocol
@@ -60,154 +55,134 @@ OSCP intercepts the compositor's render pipeline at the OS level and delivers ra
 └──────────┘          └──────────┘          └──────────┘
      │                     │                     │
      ▼                     ▼                     ▼
- Window Server        X11/Compositor          UIA + Win32
+  AXUIElement           AT-SPI2              UIA + WMI
+       │                     │                     │
+       └─────────────────────┼─────────────────────┘
+                             │
+                    Error Handling + Fallback
+                             │
+                    ┌────────┴────────┐
+                    │                 │
+                    ▼                 ▼
+              CDP Bridge      Heuristics Engine
+              (Electron)      (Custom UIs)
 ```
 
 ---
 
-## Per-Platform Approaches
+## Per-Platform Implementation
 
-### macOS
+| Platform | Primary | Fallback | Coverage |
+|----------|---------|----------|----------|
+| **macOS** | AXUIElement | Position-only + CDP | 95% |
+| **Linux** | AT-SPI2 | X11 + Heuristics | 90-95% |
+| **Windows** | UIAutomation | CDP + WMI | 90% |
 
-**Method:** `CGWindowListCopyWindowInfo` (Window Server)
+---
 
-- Window Server is the compositor
-- Layer tree accessible via Core Graphics APIs
-- No GPU hooks needed
-- Official, stable API
+## Error Handling Architecture
 
-### Linux
+### The Empty Tree Problem
 
-**Method:** X11 APIs + Compositor OpenGL Hook
+When the semantic tree is empty or unhelpful (custom renderers, unlabeled icons, DRM), OSCP provides a fallback hierarchy:
 
-**Tier 1:** X11 (primary)
-- `XQueryTree` for window hierarchy
-- `XGetWindowProperty` for metadata
-- Covers X11 desktops + Xwayland apps (~85%)
+```
+LEVEL 1: Native Semantic Tree (90% of apps)
+   ↓ works
+LEVEL 2: CDP Bridge (Electron/Browser apps)
+   ↓ works
+LEVEL 3: Structural Heuristics (Custom UIs)
+   ↓ works
+LEVEL 4: Position-Only Mode (Games, Custom renderers)
+   ↓ works
+LEVEL 5: Human Handoff (Escalation)
+```
 
-**Tier 2:** Compositor Hook (Wayland native)
-- Hooks: Mutter, KWin, Sway OpenGL/EGL
-- One hook = full Wayland scene
-- Adds ~10% coverage
+### Tree Quality Analysis
 
-### Windows
+```json
+{
+  "tree_analysis": {
+    "coverage_score": 0.85,
+    "named_elements": 45,
+    "unlabeled_elements": 3,
+    "avg_depth": 4,
+    "confidence": "HIGH"
+  }
+}
+```
 
-**Method:** UIA + Win32 APIs
+- `coverage_score < 0.3` → Trigger fallback
+- `named_elements / total < 0.5` → Low confidence
+- `root_has_no_children` → Custom renderer detected
 
-**Tier 1:** Win32 APIs
-- `EnumWindows` for window list
-- `GetWindowRect` for positions
-- `GetWindowText` for titles
+### Confidence Scoring
 
-**Tier 2:** UI Automation
-- Full element tree per window
+| Confidence | Action |
+|------------|--------|
+| > 0.8 | Execute immediately |
+| 0.5-0.8 | Execute with monitoring |
+| < 0.5 | Explore first |
+| < 0.2 | Human handoff |
+
+---
+
+## CDP Bridge (Electron/Browser Apps)
+
+For Electron apps (VS Code, Slack, Discord) and browsers:
+
+```json
+{
+  "action": "cdp_snapshot",
+  "target": "electron_app",
+  "returns": {
+    "dom_tree": {...},
+    "bounding_boxes": [...],
+    "element_labels": [...]
+  }
+}
+```
+
+Covers: Chrome, Edge, Firefox, VS Code, Slack, Discord, Notion, Figma.
+
+---
+
+## Supported Capabilities
+
+### Read (Semantic Tree)
+- Window enumeration
 - Element types, names, states
 - Bounding rectangles
+- Parent-child relationships
+- Z-order
 
----
+### Context (System State)
+- Active windows
+- Focus state
+- Mouse position
+- Keyboard modifiers
 
-## Quick Start
-
-### Install
-
-```bash
-# macOS
-brew install oscp
-
-# Linux
-sudo apt install oscp
-
-# Windows (V1)
-winget install OSCP.Windows
-```
-
-### Connect
-
-```python
-import oscp
-
-client = oscp.connect("unix:///tmp/oscp.sock")  # macOS/Linux
-# or
-client = oscp.connect("tcp://localhost:9876")    # Windows
-
-async for tree in client.stream():
-    for window in tree.windows:
-        for op in window.ops:
-            print(f"rect: {op.bounds}, z: {op.z}")
-
-client.click(x=100, y=200)
-```
+### Actuate (Input)
+- Mouse: click, move, drag, scroll
+- Keyboard: type, key press, key combo
+- Hardware-level (kernel signals)
 
 ---
 
 ## Coverage
 
-| Platform | Coverage | Gaps |
-|----------|----------|------|
-| **macOS** | 95% | Screen sharing, DRM, sandboxed apps |
-| **Linux** | 90-95% | Some Wayland compositors, TTY, KMS apps |
-| **Windows** | 90% | Non-UIA apps, legacy Win32, protected content |
-
----
-
-## Gaps After V1
-
-| Gap | Severity | Fillable? |
-|-----|----------|-----------|
-| Element semantics (macOS/Linux) | Moderate | ✅ Agent skills |
-| WebGL/Canvas content | Moderate | ⚠️ Partially |
-| Color semantics | Minor | ✅ Protocol extension |
-| Audio | Minor | ✅ Separate API later |
-| Protected content | Minor | ❌ OS restriction |
-| Physical hardware | Minor | ❌ Separate API later |
-
----
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [SPEC.md](SPEC.md) | Project overview |
-| [protocol/SPEC.md](protocol/SPEC.md) | Core protocol |
-| [platforms/macos/SPEC.md](platforms/macos/SPEC.md) | macOS driver |
-| [platforms/linux/SPEC.md](platforms/linux/SPEC.md) | Linux driver |
-| [platforms/windows/SPEC.md](platforms/windows/SPEC.md) | Windows driver |
-| [agents/SPEC.md](agents/SPEC.md) | Agent integration |
-
----
-
-## Project Structure
-
-```
-OSCP/
-├── README.md
-├── SPEC.md
-├── protocol/SPEC.md           # Core protocol
-├── platforms/
-│   ├── macos/SPEC.md         # Window Server (CGWindowList)
-│   ├── linux/SPEC.md         # X11 + Compositor Hook
-│   └── windows/SPEC.md       # UIA + Win32
-├── agents/SPEC.md
-└── MEMORY/
-    ├── project-overview.md
-    └── DECISIONS.md
-```
+| Platform | Coverage | Blind Spots |
+|----------|----------|-------------|
+| **macOS** | 95% | Screen sharing, DRM |
+| **Linux** | 90-95% | Some Wayland, TTY |
+| **Windows** | 90% | Non-UIA apps, protected |
 
 ---
 
 ## Status
 
-🚧 **V1 Development** — macOS, Linux, Windows drivers
-🚧 **V2 Planning** — Render ops for Windows (DWM hook)
-
----
-
-## Core Principle
-
-> Humans interact through interfaces.
-> Agents interact through meaning.
-
-OSCP provides the geometry. Agent provides the meaning. Execution remains deterministic.
+🚧 **V1 Development** — All three platforms with error handling
+🚧 **V2** — Windows render ops (DWM hook)
 
 ---
 
