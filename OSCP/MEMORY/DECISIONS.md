@@ -2,83 +2,124 @@
 
 ## Key Architectural Decisions
 
-### 1. No screenshots, no semantics
-**Decision:** OSCP delivers only raw render geometry — positions, z-order, texture IDs. No screenshots. No element types. No accessibility data.
+### 1. OS-Level Compositor Interception (Not Per-App Hook)
+
+**Decision:** Intercept the compositor's render tree at the OS level, not per-app DXGI hooks.
+
+**Rationale:**
+- Per-app hook only captures DirectX apps (~85%)
+- Compositor intercept captures ALL apps (OpenGL, Vulkan, GDI, etc.)
+- One interception point vs inject into every process
+- Games with anti-cheat still captured at compositor output
+
+### 2. No Screenshots, No Pixels, No VLM
+
+**Decision:** OSCP delivers only raw render geometry — positions, z-order, texture IDs from compositor.
 
 **Rationale:**
 - Screenshots reintroduce VLM dependency
+- Pixels are slow, expensive, unreliable
 - Agent provides the meaning, not the protocol
-- Simpler architecture, deterministic output
+- Compositor render tree has all the structural data needed
 
-### 2. Intercept at render source
-**Decision:** Intercept render operations at the graphics API layer (DXGI, CGWindowList, X11) rather than observing pixels.
+### 3. Intercept the Compositor (Not Per-App)
 
-**Rationale:**
-- Draw calls already ARE the element list
-- Pixel-perfect precision vs fuzzy VLM guessing
-- <50ms latency vs 2-5 seconds for vision
+**Decision:** One interception point at the compositor covers all apps.
 
-### 3. Tiered platform approach
-**Decision:** Each OS uses its native graphics API for capture.
+**Before (per-app hook):**
+```
+App A (DXGI) ──► Hook ──► missed
+App B (OpenGL) ──► ❌ Hook ──► missed
+App C (Vulkan) ──► ❌ Hook ──► missed
+```
 
-| Platform | Capture Method |
-|----------|---------------|
-| Windows | DXGI hook |
-| macOS | CGWindowList |
-| Linux | X11/Wayland |
+**After (compositor intercept):**
+```
+App A ─┐
+App B ─┼─► Compositor ─► INTERCEPT ─► Agent (covers all)
+App C ─┘
+```
 
-**Rationale:** Native APIs provide the raw render data. Each platform is different, no single abstraction works.
+### 4. Agent as Client, Driver as Server
 
-### 4. Agent as client, driver as server
 **Decision:** Platform driver is TCP/Unix socket server. Agent harness connects as client.
 
 **Rationale:**
 - Clean separation of concerns
-- Driver can be a background service
+- Driver runs as background service
 - Agent can be swapped without touching driver
+- Multiple agents can connect to same driver
 
-### 5. Length-prefixed JSON framing
+### 5. Length-Prefixed JSON Framing
+
 **Decision:** Every message is `[4-byte big-endian length][JSON payload]`.
 
 **Rationale:**
 - Simple, no external dependencies
 - Works over any transport (TCP, Unix socket, stdio)
 - Self-delimiting frames
+- Language-agnostic
 
-### 6. Event-driven frame streaming
-**Decision:** Driver continuously pushes frames to agent at target frame rate.
+### 6. Event-Driven Render Tree Streaming
+
+**Decision:** Driver continuously pushes render trees to agent at target frame rate.
 
 **Rationale:**
 - Agent doesn't need to poll
-- Real-time awareness of UI state
+- Real-time awareness of desktop state
 - Window opened/closed/focused events
+- Agent sees every change as it happens
 
-### 7. Raw geometry only
-**Decision:** Agent receives `render_ops` array with bounds, z, texture_id only.
+### 7. Raw Geometry Only from Compositor
+
+**Decision:** Agent receives `windows` with `ops` (bounds, z, texture_id) from compositor scene tree.
 
 **Rationale:**
 - Agent figures out semantics from geometry
 - No protocol-level assumptions about UI patterns
+- No element types, states, or accessibility data
 - Agent can be as smart or simple as needed
+
+### 8. Render Tree Structure (Not Screenshot)
+
+**Decision:** Frame is a hierarchical render tree, not a flat pixel buffer.
+
+**Rationale:**
+- Render tree preserves spatial structure
+- Z-order, parent-child relationships preserved
+- Agent can reason about layout from tree
+- Tree is smaller than pixel buffer
 
 ## Rejected Approaches
 
-### Screenshots as fallback
-**Rejected:** We initially considered screenshots as a fallback for apps that don't render via DirectX.
+### Per-App DXGI Hook
+**Rejected:** Only captures DirectX apps. Misses OpenGL, Vulkan, games.
 
-**Reason:** Reintroduces VLM dependency. OSCP is pure render interception.
+### Screen Recording / Screenshots
+**Rejected:** Reintroduces VLM dependency, slow, expensive, unreliable.
 
-### Accessibility API integration
-**Rejected:** Using UIA/AXUIElement/AT-SPI for semantic element data.
+### Accessibility APIs (UIA, AXUIElement, AT-SPI)
+**Rejected:** Agent provides the meaning. Semantic types not needed from protocol.
 
-**Reason:** Agent provides the meaning. Semantic types are not needed from protocol.
+### Request/Response Polling
+**Rejected:** Event-driven streaming is better for real-time UI automation.
 
-### Screenshot quality levels
-**Rejected:** Multiple screenshot quality options (low, medium, high).
+### Multiple Interception Points
+**Rejected:** One point at compositor is simpler and more reliable than multiple per-app hooks.
 
-**Reason:** No screenshots in final design.
+## Platform-Specific Decisions
 
-### Request/response model
-**Rejected:** Agent polls for frames on demand.
+### Windows: DWM Compositor
+- Use Graphics Capture API / DWM internals
+- Intercept scene tree at compositor level
+- Covers DirectX, OpenGL, Vulkan, GDI, all apps
 
-**Reason:** Event-driven is better for real-time UI automation.
+### macOS: Window Server
+- Extract layer tree from Window Server
+- Intercept at compositor level
+- Covers AppKit, Metal, Quartz, all apps
+
+### Linux: X11/Wayland
+- Intercept scene graph in X11 server / Wayland compositor
+- Covers X11, Wayland, all apps
+- Fallback: X11 if Wayland not available

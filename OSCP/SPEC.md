@@ -1,31 +1,29 @@
 # OSCP — Operating System Context Protocol
 
-**Version:** 0.1.0 (Draft)
+**Version:** 0.2.0 (Draft)
 **Status:** Design finalization complete
 
 ---
 
 ## Purpose
 
-OSCP is a foundational protocol for agent-native OS interaction. It provides agents with raw render geometry from the desktop interface — positions, z-order, texture IDs — enabling them to see, interact with, and manage GUI applications just like humans.
+OSCP is a foundational protocol for agent-native OS interaction. It intercepts the compositor's render pipeline at the OS level and delivers raw render operations to agents — enabling them to see and interact with the full desktop just like humans.
 
-**Goal:** Replace unreliable VLM-based screen observation with native render interception. Agent receives geometry. Agent provides meaning.
+**Goal:** Replace unreliable VLM-based screen observation with OS-level compositor interception. No pixels. No screenshots. Just decoded geometry from one interception point covering all apps.
 
 ---
 
 ## Principle
 
-> "Intercept at the source. Deliver the geometry. Agent provides the meaning."
+> "Intercept the compositor. Decode the render tree. Agent provides the meaning."
 
 ```
-Traditional (VLM):
-App → Render → Pixels → Agent guesses from visual patterns
+VLM approach:
+Compositor ─► Pixels ─► VLM guesses ─► Agent guesses
 
-OSCP:
-App → Render → INTERCEPT HERE → Raw geometry → Agent reasons
-                     ↓
-              Positions, z-order, texture IDs
-              (exact, deterministic)
+OSCP approach:
+Compositor ─► Render tree ─► Decode ─► Agent knows exact positions
+             (intercept here)
 ```
 
 ---
@@ -51,11 +49,20 @@ App → Render → INTERCEPT HERE → Raw geometry → Agent reasons
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### The Intercept Point
+
+```
+App A (OpenGL) ─┐
+App B (Vulkan)  ─┼─► Compositor ─► INTERCEPT ─► Decode ─► Agent
+App C (DXGI)    ─┘       ↑
+                    One point. All apps.
+```
+
 ### Layers
 
 | Layer | Description |
 |-------|-------------|
-| **Platform Driver** | OS-specific render interception |
+| **Platform Driver** | OS-level compositor interception |
 | **Protocol** | Transport, framing, message types |
 | **Agent Interface** | Unified API for any agent |
 
@@ -65,20 +72,20 @@ App → Render → INTERCEPT HERE → Raw geometry → Agent reasons
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `frame_id` | number | Unique frame identifier |
-| `timestamp` | number | Frame timestamp (ms) |
-| `surfaces` | array | List of windows/surfaces |
+| `render_tree` | object | Full compositor scene tree |
+| `windows` | array | All visible windows |
+| `ops` | array | Render operations (bounds, z, texture) |
 | `mouse` | object | Cursor position and hovered element |
 
-### Surface
+### Window
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Surface identifier |
+| `id` | string | Window identifier |
 | `title` | string | Window title |
 | `bounds` | object | Window bounds (x, y, w, h) |
 | `focused` | boolean | Window focus state |
-| `render_ops` | array | Draw operations from render pipeline |
+| `ops` | array | Render operations in this window |
 
 ### Render Operation
 
@@ -86,7 +93,7 @@ App → Render → INTERCEPT HERE → Raw geometry → Agent reasons
 |-------|------|-------------|
 | `id` | string | Unique operation identifier |
 | `bounds` | object | Position (x, y) and size (w, h) |
-| `z` | number | Z-index (render order) |
+| `z` | number | Z-index (render order, higher = on top) |
 | `texture_id` | string | Texture identifier |
 | `clip_bounds` | object | Optional clipping rect |
 
@@ -96,7 +103,7 @@ App → Render → INTERCEPT HERE → Raw geometry → Agent reasons
 |-------|------|-------------|
 | `x` | number | Cursor X position |
 | `y` | number | Cursor Y position |
-| `hovered_op_id` | string | Render op under cursor (if any) |
+| `hovered_op_id` | string | Render op under cursor |
 
 ---
 
@@ -104,18 +111,49 @@ App → Render → INTERCEPT HERE → Raw geometry → Agent reasons
 
 ### Windows
 
-**Capture:** DXGI hook intercepts DirectX render operations
+**Compositor:** Desktop Window Manager (DWM)
+**Intercept:** Graphics Capture API / DWM scene capture
 **Input:** SendInput, PostMessage
 
 ### macOS
 
-**Capture:** CGWindowList API for window content
+**Compositor:** Window Server
+**Intercept:** Layer tree extraction via Core Graphics
 **Input:** CGEvent
 
 ### Linux
 
-**Capture:** X11 window introspection (XRecord)
+**Compositor:** X11 / Wayland
+**Intercept:** X11 damage tracking / Wayland compositor protocols
 **Input:** XTest
+
+---
+
+## Why Compositor Interception?
+
+### Per-App Hook vs Compositor Interception
+
+| Aspect | Per-App Hook | Compositor Interception |
+|--------|--------------|-------------------------|
+| **Coverage** | 85% | 100% |
+| **Interception point** | Each app | One global |
+| **OpenGL** | ❌ No | ✅ Yes |
+| **Vulkan** | ❌ No | ✅ Yes |
+| **Games** | ❌ No | ✅ Yes |
+| **Anti-cheat** | ❌ Blocked | ✅ Captures output |
+| **Complexity** | High | Lower |
+| **Data** | Per-app ops | Global scene tree |
+
+### Screen Recording vs Compositor Interception
+
+| Aspect | Screen Recording | Compositor Interception |
+|--------|-----------------|------------------------|
+| **Output** | Pixels | Render ops |
+| **VLM needed** | Yes | No |
+| **Speed** | Slow (2-5 sec) | Fast (<50ms) |
+| **Cost** | High (tokens) | Low (raw data) |
+| **Precision** | Fuzzy | Exact |
+| **Structural data** | None | Full |
 
 ---
 
@@ -124,9 +162,9 @@ App → Render → INTERCEPT HERE → Raw geometry → Agent reasons
 | Phase | Description |
 |-------|-------------|
 | **V0** | Protocol design and spec finalization |
-| **V1** | Windows platform driver (DXGI hook + actions) |
-| **V2** | macOS platform driver |
-| **V3** | Linux platform driver |
+| **V1** | Windows compositor driver (DWM) |
+| **V2** | macOS compositor driver |
+| **V3** | Linux compositor driver |
 | **V4** | Cross-platform unification and agent SDK |
 
 ---
@@ -136,14 +174,14 @@ App → Render → INTERCEPT HERE → Raw geometry → Agent reasons
 ```
 OSCP/
 ├── protocol/           # Protocol specification
-│   └── SPEC.md        # Core protocol spec
+│   └── SPEC.md        # Core protocol
 │
 ├── platforms/          # OS-specific drivers
-│   ├── windows/       # Windows implementation (DXGI hook)
-│   ├── macos/         # macOS implementation
-│   └── linux/         # Linux implementation
+│   ├── windows/       # Windows compositor intercept
+│   ├── macos/         # macOS Window Server intercept
+│   └── linux/         # Linux compositor intercept
 │
-├── agents/             # Agent integration adapters
+├── agents/             # Agent integration
 │   └── SPEC.md       # Agent SDK guidelines
 │
 └── README.md          # Project overview
@@ -153,7 +191,7 @@ OSCP/
 
 ## Status
 
-🚧 **Phase 0** — Protocol design complete. Specs finalized.
+🚧 **Phase 0** — Protocol design complete. Compositor interception approach finalized.
 
 ---
 

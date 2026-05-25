@@ -1,13 +1,13 @@
 # OSCP Agent Integration Specification
 
-**Version:** 0.1.0
+**Version:** 0.2.0
 **Status:** Draft
 
 ---
 
 ## Overview
 
-OSCP provides agents with raw render geometry — positions, z-order, texture IDs — enabling agents to see and interact with the desktop just like humans. Agent provides the meaning.
+OSCP provides agents with raw render operations from the compositor's scene tree — positions, z-order, texture IDs — enabling agents to see and interact with the full desktop just like humans. Agent provides the meaning.
 
 ---
 
@@ -25,7 +25,7 @@ Agent                          OSCP Driver
   │  Receive: welcome              │
   │ ◄───────────────────────────── │
   │                                │
-  │  Receive: frame stream         │
+  │  Receive: render tree stream   │
   │ ◄───────────────────────────── │
   │                                │
   │  Send: actions                 │
@@ -36,23 +36,23 @@ Agent                          OSCP Driver
 
 ## Data Received by Agent
 
-### Frame Structure
+### Render Tree Structure
 
 Every frame sent by OSCP to the agent contains:
 
 ```json
 {
-  "type": "frame",
+  "type": "render_tree",
   "frame_id": 12345,
   "timestamp": 1716576000000,
-  "surfaces": [
+  "windows": [
     {
-      "id": "surface_abc123",
+      "id": "win_abc123",
       "title": "Visual Studio Code",
       "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
       "position": {"x": 100, "y": 50},
       "focused": true,
-      "render_ops": [
+      "ops": [
         {
           "id": "op_001",
           "bounds": {"x": 10, "y": 10, "w": 100, "h": 30},
@@ -76,9 +76,9 @@ Every frame sent by OSCP to the agent contains:
 }
 ```
 
-### Surface
+### Window
 
-A surface represents a window or visual region.
+A window represents a visible surface in the compositor scene.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -87,11 +87,11 @@ A surface represents a window or visual region.
 | `bounds` | object | Window size (w, h) |
 | `position` | object | Window position (x, y) |
 | `focused` | boolean | Is window focused |
-| `render_ops` | array | Draw operations from render pipeline |
+| `ops` | array | Render operations in this window |
 
 ### Render Operation
 
-A render operation represents a single draw call from the graphics pipeline.
+A render operation represents a draw call from the compositor.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -113,12 +113,12 @@ A render operation represents a single draw call from the graphics pipeline.
 
 ## What Agent Infers
 
-Agent receives raw geometry. Agent provides:
+Agent receives raw geometry from the compositor. Agent provides:
 
 | What Agent Deduces | How |
 |-------------------|-----|
 | Element type (button, label, input) | From position, size, z-order patterns |
-| Clickable regions | From z-order and texture hints |
+| Clickable regions | From z-order and texture patterns |
 | Text content | From texture patterns and surrounding elements |
 | Element state | From mouse position and recent actions |
 | Layout structure | From bounds and z-order relationships |
@@ -133,7 +133,6 @@ Agent receives raw geometry. Agent provides:
 {
   "type": "action",
   "action_id": "act_001",
-  "surface_id": "surface_abc123",
   "action": {
     "kind": "click",
     "x": 50,
@@ -150,7 +149,6 @@ Agent receives raw geometry. Agent provides:
 {
   "type": "action",
   "action_id": "act_002",
-  "surface_id": "surface_abc123",
   "action": {
     "kind": "move",
     "x": 100,
@@ -165,7 +163,6 @@ Agent receives raw geometry. Agent provides:
 {
   "type": "action",
   "action_id": "act_003",
-  "surface_id": "surface_abc123",
   "action": {
     "kind": "drag",
     "start_x": 100,
@@ -183,7 +180,6 @@ Agent receives raw geometry. Agent provides:
 {
   "type": "action",
   "action_id": "act_004",
-  "surface_id": "surface_abc123",
   "action": {
     "kind": "scroll",
     "delta_x": 0,
@@ -198,7 +194,6 @@ Agent receives raw geometry. Agent provides:
 {
   "type": "action",
   "action_id": "act_005",
-  "surface_id": "surface_abc123",
   "action": {
     "kind": "type",
     "text": "hello world"
@@ -212,7 +207,6 @@ Agent receives raw geometry. Agent provides:
 {
   "type": "action",
   "action_id": "act_006",
-  "surface_id": "surface_abc123",
   "action": {
     "kind": "key_press",
     "key": "enter"
@@ -226,7 +220,6 @@ Agent receives raw geometry. Agent provides:
 {
   "type": "action",
   "action_id": "act_007",
-  "surface_id": "surface_abc123",
   "action": {
     "kind": "key_combo",
     "key": "s",
@@ -239,16 +232,16 @@ Agent receives raw geometry. Agent provides:
 
 ## Event Types
 
-Agents receive system events.
+Agents receive system events from the compositor.
 
 | Event | Description |
 |-------|-------------|
-| `window_opened` | New surface created |
-| `window_closed` | Surface removed |
-| `window_focused` | Surface gained focus |
-| `window_unfocused` | Surface lost focus |
-| `window_moved` | Surface position changed |
-| `window_resized` | Surface size changed |
+| `window_opened` | New window appeared |
+| `window_closed` | Window removed |
+| `window_focused` | Window gained focus |
+| `window_unfocused` | Window lost focus |
+| `window_moved` | Window position changed |
+| `window_resized` | Window size changed |
 | `key_pressed` | Keyboard input received |
 | `mouse_moved` | Mouse moved |
 | `mouse_clicked` | Mouse button pressed |
@@ -276,16 +269,14 @@ client = oscp.connect("tcp://localhost:9876")  # Windows
 # or
 client = oscp.connect("unix:///tmp/oscp.sock")  # macOS/Linux
 
-# Get current frame
-frame = client.get_frame()
-
-# Iterate over surfaces
-for surface in frame.surfaces:
-    print(f"Window: {surface.title}")
-    
-    # Iterate over render operations (raw geometry)
-    for op in surface.render_ops:
-        print(f"  rect: {op.bounds}, z: {op.z}, texture: {op.texture_id}")
+# Receive render tree stream
+async for tree in client.stream():
+    for window in tree.windows:
+        print(f"Window: {window.title}")
+        
+        # Iterate over render operations (raw geometry)
+        for op in window.ops:
+            print(f"  rect: {op.bounds}, z: {op.z}, texture: {op.texture_id}")
 
 # Perform action
 result = client.click(x=100, y=200)
@@ -296,15 +287,17 @@ import { createOSCPClient } from 'oscp-sdk';
 
 const client = createOSCPClient('tcp://localhost:9876');
 
-const frame = await client.getFrame();
+const connection = await client.connect();
 
-for (const surface of frame.surfaces) {
-    console.log(`Window: ${surface.title}`);
-    
-    for (const op of surface.render_ops) {
-        console.log(`  rect: ${op.bounds}, z: ${op.z}`);
+connection.on('render_tree', (tree) => {
+    for (const window of tree.windows) {
+        console.log(`Window: ${window.title}`);
+        
+        for (const op of window.ops) {
+            console.log(`  rect: ${op.bounds}, z: ${op.z}`);
+        }
     }
-}
+});
 
 const result = await client.click({ x: 100, y: 200 });
 ```
@@ -321,8 +314,8 @@ const result = await client.click({ x: 100, y: 200 });
   "action_id": "act_001",
   "success": false,
   "error": {
-    "code": "SURFACE_NOT_FOUND",
-    "message": "Surface surface_0x99999 not found",
+    "code": "WINDOW_NOT_FOUND",
+    "message": "Window win_0x99999 not found",
     "recoverable": true
   }
 }
@@ -332,7 +325,7 @@ const result = await client.click({ x: 100, y: 200 });
 
 | Error | Recovery |
 |-------|----------|
-| `SURFACE_NOT_FOUND` | Refresh surface list, retry |
+| `WINDOW_NOT_FOUND` | Refresh window list, retry |
 | `ACTION_FAILED` | Retry with exponential backoff |
 | `TRANSPORT_ERROR` | Reconnect |
 | `TIMEOUT` | Retry |
@@ -376,9 +369,9 @@ Match frame rate to use case:
 - **Static content:** 10fps
 - **Video/animation:** 60fps
 
-### 2. Element Caching
+### 2. Operation Caching
 
-Cache element references between frames. Elements are stable unless window changes.
+Cache operation references between frames. Operations are stable unless window changes.
 
 ### 3. Action Batching
 
@@ -392,9 +385,9 @@ Always implement retry logic with exponential backoff. OSCP is designed for reli
 
 ## Principle
 
-> "Intercept at the source. Deliver the geometry. Agent provides the meaning."
+> "Intercept the compositor. Decode the render tree. Agent provides the meaning."
 
-Agent receives positions, z-order, and texture IDs. Agent figures out what it all means.
+Agent receives positions, z-order, and texture IDs from the compositor's scene tree. Agent figures out what it all means. No pixels. No VLM.
 
 ---
 

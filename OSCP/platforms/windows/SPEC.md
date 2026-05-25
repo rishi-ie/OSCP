@@ -1,15 +1,96 @@
 # OSCP Windows Platform Driver Specification
 
-**Version:** 0.1.0
+**Version:** 0.2.0
 **Status:** Draft
 
 ---
 
 ## Overview
 
-The Windows platform driver provides OSCP protocol implementation for Windows 10/11. It intercepts DirectX render operations and delivers raw geometry to agents.
+The Windows platform driver provides OSCP protocol implementation for Windows 10/11. It intercepts the Desktop Window Manager (DWM) compositor at the OS level — not per-app — and delivers raw render operations to agents.
 
-**Principle:** Intercept at the source. Deliver the geometry. Agent provides the meaning.
+**Principle:** Intercept the compositor. Decode the render tree. Agent provides the meaning.
+
+---
+
+## Compositor Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     APPS                                        │
+│                                                                 │
+│   App A (DXGI) ─┐                                               │
+│   App B (OpenGL) ─┼─ RENDER ─► TEXTURES ─►                      │
+│   App C (Vulkan) ─┘                                            │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  DWM (Desktop Window Manager)                    │
+│                                                                 │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │                    SCENE MANAGER                        │   │
+│   │                                                         │   │
+│   │   Window 1 ──► Layer ──► Compositor                     │   │
+│   │   Window 2 ──► Layer ──► Compositor                     │   │
+│   │   Window 3 ──► Layer ──► Compositor                     │   │
+│   │                                                         │   │
+│   │            ┌──────────────────────┐                      │   │
+│   │            │   RENDER TREE        │                      │   │
+│   │            │   (intercept here)   │                      │   │
+│   │            └──────────────────────┘                      │   │
+│   │                                                         │   │
+│   │            INTERCEPT ─► DECODE ─► AGENT                  │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                             │                                   │
+│                             ▼                                   │
+│                      DISPLAY OUTPUT                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Intercept Approach
+
+### Why Not Per-App Hook?
+
+Per-app DXGI hook misses:
+- OpenGL applications
+- Vulkan applications
+- Games with anti-cheat
+- Some legacy GDI apps
+
+**OSCP intercepts the DWM compositor instead — one point, all apps.**
+
+### Intercept Methods
+
+| Method | Description | Coverage |
+|--------|-------------|----------|
+| **Graphics Capture API** | Windows.Graphics.Capture | Win32 windows |
+| **DWM Shared Surface** | DWM internal surfaces | All windows |
+| **Mirror Driver** | Kernel-level mirror | Full desktop |
+| **DXGI Output** | DXGI swapchain output | DirectX apps |
+
+### Approach: DWM Scene Capture
+
+DWM maintains a render tree of all visible windows. We intercept this at the compositor level:
+
+```rust
+// Conceptual approach
+struct DWMInterceptor {
+    // Hook into DWM's internal scene
+    // Extract window layers and their textures
+    // Decode render operations from each layer
+    
+    fn capture_scene() -> RenderTree {
+        // Get all visible windows from DWM
+        // For each window, extract its layers
+        // Build render tree with positions and z-order
+        // Return decoded render ops
+    }
+}
+```
 
 ---
 
@@ -20,16 +101,17 @@ The Windows platform driver provides OSCP protocol implementation for Windows 10
 │                     Platform Driver                             │
 │                                                                 │
 │  ┌───────────────┐           ┌───────────────┐                  │
-│  │  DXGI Hook    │           │  Input Engine │                  │
-│  │  (C++ DLL)     │           │  (Rust)       │                  │
+│  │  DWM Scene     │           │  Input Engine │                  │
+│  │  Interceptor   │           │  (Rust)       │                  │
+│  │  (Rust)        │           │               │                  │
 │  └───────┬───────┘           └───────┬───────┘                  │
 │          │                           │                          │
 │          └──────────┬────────────────┘                          │
 │                     │                                          │
 │              ┌──────▼──────┐                                   │
-│              │  Decoder    │                                   │
-│              │  Service     │                                   │
-│              │  (Rust)      │                                   │
+│              │  Render    │                                   │
+│              │  Decoder   │                                   │
+│              │  (Rust)    │                                   │
 │              └──────┬──────┘                                   │
 │                     │                                          │
 │              ┌──────▼──────┐                                   │
@@ -44,36 +126,57 @@ The Windows platform driver provides OSCP protocol implementation for Windows 10
 
 ## Components
 
-### 1. DXGI Hook (C++)
+### 1. DWM Scene Interceptor (Rust)
 
-**Purpose:** Intercept DirectX/Direct3D render operations at the graphics API level.
+**Purpose:** Intercept the DWM compositor's render tree.
 
-**Injection Method:**
-- DLL injected into target processes via `CreateRemoteThread` + `LoadLibrary`
-- Hook targets: `IDXGISwapChain::Present`, `ID3D11DeviceContext::DrawIndexed`
+**What it captures:**
+- All visible windows and their metadata
+- Window layers and textures
+- Compositor z-order and transforms
+- Render operations per window
 
-**Shared Memory:**
-- Ring buffer in shared memory (named `Global\\OSCP_SharedBuffer_{PID}`)
-- Producer: DXGI hook (in target process)
-- Consumer: Decoder service
-
-**Data Captured:**
-- Draw operations (texture_id, destination rect, z_index, HWND)
-- Frame timing (timestamp, frame_number)
-- Window context (HWND mapping)
-
-**Render Operations Output:**
+**Output:**
 ```json
 {
-  "id": "op_001",
-  "bounds": {"x": 10, "y": 10, "w": 100, "h": 30},
-  "z": 1,
-  "texture_id": "0xAA01",
-  "clip_bounds": {"x": 15, "y": 15, "w": 90, "h": 20}
+  "windows": [
+    {
+      "id": "win_0x12345",
+      "title": "Visual Studio Code",
+      "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
+      "position": {"x": 100, "y": 50},
+      "focused": true,
+      "ops": [
+        {
+          "id": "op_001",
+          "bounds": {"x": 10, "y": 10, "w": 100, "h": 30},
+          "z": 1,
+          "texture_id": "0xAA01"
+        }
+      ]
+    }
+  ]
 }
 ```
 
-### 2. Input Engine (Rust)
+### 2. Render Decoder (Rust)
+
+**Purpose:** Decode the DWM scene into render operations.
+
+**Pipeline:**
+```
+1. Capture DWM scene (shared surfaces)
+   ↓
+2. Extract window list and metadata
+   ↓
+3. For each window, extract layers and textures
+   ↓
+4. Build render tree with positions, z-order
+   ↓
+5. Output render operations with bounds and texture IDs
+```
+
+### 3. Input Engine (Rust)
 
 **Purpose:** Execute agent actions on Windows.
 
@@ -87,56 +190,20 @@ The Windows platform driver provides OSCP protocol implementation for Windows 10
 
 ---
 
-## Capture Pipeline
+## Coverage
 
-### Frame Capture Flow
+| App Type | Works? | Notes |
+|----------|--------|-------|
+| DirectX apps (Chrome, VS Code) | ✅ Yes | Via DWM layer capture |
+| OpenGL apps | ✅ Yes | Via DWM layer capture |
+| Vulkan apps | ✅ Yes | Via DWM layer capture |
+| GDI apps | ✅ Yes | Via DWM layer capture |
+| Games | ✅ Yes | Captured at compositor |
+| Anti-cheat games | ✅ Yes | Output captured, not hooked |
+| DRM content | ❌ No | Protected at source |
+| Remote Desktop | ❌ No | App runs on remote machine |
 
-```
-1. DXGI Hook captures Present() call
-   ↓
-2. Draw operations extracted (texture, rect, z)
-   ↓
-3. HWND determined from swapchain
-   ↓
-4. Frame written to ring buffer
-   ↓
-5. Decoder reads frame from shared memory
-   ↓
-6. Frame assembled with window context
-   ↓
-7. Raw frame sent to agent via protocol
-```
-
-### Rendering Interception Points
-
-| Interface | Method | Purpose |
-|-----------|--------|---------|
-| `IDXGISwapChain` | `Present()` | Frame boundary detection |
-| `ID3D11DeviceContext` | `DrawIndexed()` | Individual draw operations |
-| `ID3D11DeviceContext` | `PSSetShaderResources()` | Texture binding |
-
----
-
-## Window Management
-
-### Surface Discovery
-
-- Enumerate all windows via `EnumWindows`
-- Track by `HWND` value
-- Map `HWND` → surface ID
-- Handle: hidden, minimized, maximized, restored
-
-### Surface Data
-
-```json
-{
-  "id": "surface_0x12345",
-  "title": "Visual Studio Code",
-  "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
-  "position": {"x": 100, "y": 50},
-  "focused": true
-}
-```
+**Coverage: ~95% of desktop apps**
 
 ---
 
@@ -158,10 +225,11 @@ Length-prefixed JSON:
 ```json
 {
   "platform": "windows",
-  "driver": "oscp-windows-v0.1",
-  "capabilities": ["frames", "actions", "events"],
+  "driver": "oscp-windows-v0.2",
+  "compositor": "dwm",
+  "capabilities": ["render_tree", "actions", "events"],
   "features": {
-    "dxgi_hook": true,
+    "compositor_intercept": true,
     "multi_window": true,
     "multi_monitor": true
   }
@@ -183,8 +251,8 @@ winget install OSCP.Windows
 
 1. OSCP service starts (Windows service or auto-launch)
 2. Agent connects via TCP
-3. Driver sends `welcome` message
-4. Frame streaming begins
+3. Driver sends `welcome` message with compositor info
+4. Render tree streaming begins
 
 ---
 
@@ -194,16 +262,12 @@ winget install OSCP.Windows
 {
   "windows": {
     "capture": {
-      "frame_rate": 30
+      "frame_rate": 30,
+      "compositor": "dwm"
     },
     "input": {
       "method": "sendinput",
       "action_delay_ms": 0
-    },
-    "hooks": {
-      "auto_hook": true,
-      "target_processes": ["*"],
-      "excluded_processes": ["explorer.exe"]
     }
   }
 }
@@ -215,19 +279,20 @@ winget install OSCP.Windows
 
 | Limitation | Description |
 |------------|-------------|
-| DXGI only | DirectX apps only. OpenGL/Vulkan excluded. |
-| User-mode hook | Detectable by some applications. |
-| Games | Some block hooks (anti-cheat). |
+| DRM content | Netflix, etc. protected at source |
+| Remote Desktop | No access to remote machine compositor |
+| Protected apps | Some UWP apps may restrict capture |
 
 ---
 
 ## Status
 
-🚧 **V1 Target:** DXGI hook + raw geometry + basic actions
+🚧 **V1 Target:** DWM compositor interception + render tree + actions
 
 ---
 
 ## References
 
-- [DXGI Overview](https://learn.microsoft.com/en-us/windows/win32/direct3ddxgi/dxgi-landing)
-- [SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput)
+- [Desktop Window Manager](https://learn.microsoft.com/en-us/windows/win32/dwm/wm-dwm--desktop-window-manager-)
+- [Graphics Capture API](https://learn.microsoft.com/en-us/windows/win32graphics/capture/graphics-capture-api)
+- [DWM Overview](https://learn.microsoft.com/en-us/windows/win32/dwm/dwm-overview)

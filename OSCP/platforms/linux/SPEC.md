@@ -1,15 +1,160 @@
 # OSCP Linux Platform Driver Specification
 
-**Version:** 0.1.0
+**Version:** 0.2.0
 **Status:** Draft
 
 ---
 
 ## Overview
 
-The Linux platform driver provides OSCP protocol implementation for Linux distributions. It supports multiple desktop environments (GNOME, KDE, Xfce, etc.) via X11 and Wayland.
+The Linux platform driver provides OSCP protocol implementation for Linux distributions. It intercepts the X11/Wayland compositor at the OS level and delivers raw render operations to agents.
 
-**Principle:** Intercept at the source. Deliver the geometry. Agent provides the meaning.
+**Principle:** Intercept the compositor. Decode the render tree. Agent provides the meaning.
+
+---
+
+## Compositor Architecture
+
+### X11
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     APPS                                        │
+│                                                                 │
+│   App A (GTK) ─────┐                                            │
+│   App B (Qt)      ─┼─ RENDER ─► X11 REQUESTS ─►                 │
+│   App C (SDL)     ─┘                                           │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      X11 SERVER                                 │
+│                                                                 │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │                    WINDOW TREE                          │   │
+│   │                                                         │   │
+│   │   Window 1 ──► Properties ──► Compositor                 │   │
+│   │   Window 2 ──► Properties ──► Compositor                 │   │
+│   │   Window 3 ──► Properties ──► Compositor                 │   │
+│   │                                                         │   │
+│   │            ┌──────────────────────┐                      │   │
+│   │            │   WINDOW TREE        │                      │   │
+│   │            │   (intercept here)   │                      │   │
+│   │            └──────────────────────┘                      │   │
+│   │                                                         │   │
+│   │            INTERCEPT ─► DECODE ─► AGENT                  │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                             │                                   │
+│                             ▼                                   │
+│                      DISPLAY OUTPUT                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Wayland
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     APPS                                        │
+│                                                                 │
+│   App A (GTK4) ────┐                                           │
+│   App B (Qt)      ─┼─ RENDER ─► WAYLAND PROTOCOL ─►            │
+│   App C (SDL)     ─┘                                           │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   WAYLAND COMPOSITOR                           │
+│                                                                 │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │                    SURFACE TREE                         │   │
+│   │                                                         │   │
+│   │   Surface 1 ──► wl_surface ──► Compositor               │   │
+│   │   Surface 2 ──► wl_surface ──► Compositor               │   │
+│   │   Surface 3 ──► wl_surface ──► Compositor               │   │
+│   │                                                         │   │
+│   │            ┌──────────────────────┐                      │   │
+│   │            │   SURFACE TREE       │                      │   │
+│   │            │   (intercept here)   │                      │   │
+│   │            └──────────────────────┘                      │   │
+│   │                                                         │   │
+│   │            INTERCEPT ─► DECODE ─► AGENT                  │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                             │                                   │
+│                             ▼                                   │
+│                      DISPLAY OUTPUT                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Intercept Approach
+
+### Why Not Per-App Hook?
+
+Per-app OpenGL/Vulkan hook misses:
+- GTK/Qt apps (X11/Wayland rendering)
+- Games with different renderers
+- Legacy X11 apps
+
+**OSCP intercepts the X11/Wayland compositor instead — one point, all apps.**
+
+### X11 Intercept Methods
+
+| Method | Description | Coverage |
+|--------|-------------|----------|
+| **XQueryTree** | Window hierarchy | Metadata only |
+| **XDamage** | Change tracking | Efficient updates |
+| **XFixes** | Region operations | Clip bounds |
+| **Shared memory pixmap** | Texture content | Partial render data |
+
+### Wayland Intercept Methods
+
+| Method | Description | Coverage |
+|--------|-------------|----------|
+| **xdg-decoration** | Window decorations | Metadata |
+| **wl_viewport** | Surface regions | Clip bounds |
+| **wl_subcompositor** | Surface hierarchy | Z-order |
+| **DMABUF** | Buffer interception | Texture data |
+
+### Approach: Compositor Scene Graph
+
+The compositor maintains a scene graph of all surfaces. We intercept this:
+
+**X11:**
+```rust
+// Conceptual approach
+struct X11CompositorInterceptor {
+    // Hook into X11 server's window tree
+    // Extract window properties and regions
+    // Decode render operations from damage/compositor
+    
+    fn capture_scene() -> RenderTree {
+        // Query all top-level windows
+        // Get window properties (bounds, name, class)
+        // Track damage regions for changes
+        // Build render tree with positions and z-order
+    }
+}
+```
+
+**Wayland:**
+```rust
+// Conceptual approach
+struct WaylandCompositorInterceptor {
+    // Hook into Wayland compositor protocols
+    // Extract surface hierarchy
+    // Decode render operations from compositor
+    
+    fn capture_scene() -> RenderTree {
+        // Get all surfaces from compositor
+        // Query surface properties (bounds, role, parent)
+        // Track buffer commits for changes
+        // Build render tree with positions and z-order
+    }
+}
+```
 
 ---
 
@@ -20,8 +165,9 @@ The Linux platform driver provides OSCP protocol implementation for Linux distri
 │                     Platform Driver                             │
 │                                                                 │
 │  ┌───────────────┐           ┌───────────────┐                  │
-│  │  Window       │           │  Input Engine │                  │
-│  │  Monitor      │           │  (Rust)       │                  │
+│  │  X11/Wayland  │           │  Input Engine │                  │
+│  │  Compositor   │           │  (Rust)       │                  │
+│  │  Interceptor  │           │               │                  │
 │  │  (Rust)       │           │               │                  │
 │  └───────┬───────┘           └───────┬───────┘                  │
 │          │                           │                          │
@@ -43,97 +189,71 @@ The Linux platform driver provides OSCP protocol implementation for Linux distri
 
 ---
 
-## Display Server Support
-
-Linux has multiple display servers. OSCP targets them in priority order:
-
-| Priority | Display Server | Coverage |
-|----------|---------------|----------|
-| 1 | **X11** | ~90% of desktops |
-| 2 | **Wayland** | Growing |
-| 3 | **TTY** | None (no GUI capture) |
-
-### X11 Approach
-
-**Window Enumeration:**
-```c
-XQueryTree(display, RootWindow(display, screen),
-           &root, &parent, &children, &nchildren);
-```
-
-**Window Properties:**
-```c
-XGetWindowProperty(display, win, XA_WM_NAME, ...);
-XGetWindowProperty(display, win, XA_WM_CLASS, ...);
-```
-
-**Render Operation Extraction:**
-- Use `XShmGetImage` for window content capture
-- Use `XDamage` for efficient change detection
-- Map textures and positions from window content
-
-### Wayland Approach
-
-**Compositor Introspection:**
-- Weston: weston-info, custom protocols
-- GNOME: gnome-shell built-in
-- KDE: KWin introspection
-
-**Frame Capture:**
-```c
-wl_shm + pixman for window capture
-```
-
----
-
 ## Components
 
-### 1. Window Monitor (Rust)
+### 1. X11/Wayland Compositor Interceptor (Rust)
 
-**Purpose:** Track all windows across display servers.
+**Purpose:** Intercept the compositor's scene graph.
 
-**X11 Implementation:**
-```rust
-struct X11WindowMonitor {
-    display: XConnection,
-    root: Window,
-}
+**What it captures:**
+- All visible windows/surfaces
+- Window metadata (title, bounds, class)
+- Compositor z-order and transforms
+- Render regions and damage
 
-impl X11WindowMonitor {
-    fn get_windows(&self) -> Vec<WindowInfo> {
-        // Query tree, get properties, track changes
-    }
-}
-```
-
-**Wayland Implementation:**
-```rust
-struct WaylandWindowMonitor {
-    // Use xdg-foreign for window tracking
-}
-```
-
-**Tracking:**
-- `_NET_CLIENT_LIST` for all windows
-- `_NET_ACTIVE_WINDOW` for focused
-- `PropertyNotify` for changes
-
-### 2. Render Operations
-
-Window content analyzed to extract render operations:
-
+**X11 Output:**
 ```json
 {
-  "id": "op_001",
-  "bounds": {"x": 10, "y": 10, "w": 100, "h": 30},
-  "z": 1,
-  "texture_id": "0xAA01"
+  "windows": [
+    {
+      "id": "win_0x1000001",
+      "title": "Visual Studio Code",
+      "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
+      "position": {"x": 100, "y": 50},
+      "focused": true,
+      "ops": [
+        {
+          "id": "op_001",
+          "bounds": {"x": 10, "y": 10, "w": 100, "h": 30},
+          "z": 1,
+          "texture_id": "pixmap_0x100"
+        }
+      ]
+    }
+  ]
 }
 ```
 
-- `bounds`: Position and size within window
-- `z`: Render order (higher = on top)
-- `texture_id`: Content identifier
+### 2. Render Decoder (Rust)
+
+**Purpose:** Decode the compositor scene into render operations.
+
+**Pipeline:**
+```
+X11:
+1. Query root window tree
+   ↓
+2. Enumerate all top-level windows
+   ↓
+3. Get window properties and regions
+   ↓
+4. Track damage for changes
+   ↓
+5. Build render tree
+   ↓
+6. Output render operations
+
+Wayland:
+1. Get all surfaces from compositor
+   ↓
+2. Query surface properties
+   ↓
+3. Track buffer commits
+   ↓
+4. Build render tree
+   ↓
+5. Output render operations
+```
 
 ### 3. Input Engine (Rust)
 
@@ -144,9 +264,6 @@ Window content analyzed to extract render operations:
 // XTest extension
 XTestFakeKeyEvent(display, keycode, is_press, 0);
 XFlush(display);
-
-// XSendEvent for targeted input
-XSendEvent(display, window, propagate, event_mask, &event);
 ```
 
 **Wayland Input:**
@@ -168,12 +285,12 @@ seat.pointer.motion(x, y);
 
 ```rust
 enum DesktopEnvironment {
-    GNOME,
-    KDE,
-    Xfce,
-    LXDE,
-    MATE,
-    Cinnamon,
+    GNOME,      // Mutter compositor
+    KDE,        // KWin compositor
+    Xfce,       // Xfwm compositor
+    LXDE,       // Openbox
+    MATE,       // Marco compositor
+    Cinnamon,   // Muffin compositor
     Unknown,
 }
 
@@ -182,14 +299,31 @@ fn detect_des() -> DesktopEnvironment {
 }
 ```
 
-### Environment-Specific Features
+### Wayland Compositors
 
-| Environment | Capture Method | Notes |
-|-------------|---------------|-------|
-| GNOME | X11/Wayland | Shell extensions available |
-| KDE | X11/Wayland | KWin scripts |
-| Xfce | X11 | Mature |
-| Cinnamon | X11 | Based on GNOME |
+| Compositor | Environment | Intercept Method |
+|------------|-------------|------------------|
+| Mutter | GNOME | Extended API |
+| KWin | KDE | DBus / scripting |
+| Sway | i3-based | i3ipc |
+| Weston | Generic | Protocol introspection |
+| Hyprland | Custom | Custom API |
+
+---
+
+## Coverage
+
+| App Type | Works? | Notes |
+|----------|--------|-------|
+| X11 apps (GTK, Qt) | ✅ Yes | Via X11 server |
+| Wayland native apps | ✅ Yes | Via compositor |
+| OpenGL/Vulkan games | ✅ Yes | Captured at compositor |
+| Xwayland apps | ✅ Yes | Bridged via X11 |
+| Terminal apps | ✅ Yes | Via X11/Wayland |
+| TTY | ❌ No | No compositor |
+| Wayland (no protocol) | ❌ No | Requires compositor support |
+
+**Coverage: ~90% of desktop apps**
 
 ---
 
@@ -212,13 +346,15 @@ Length-prefixed JSON:
 ```json
 {
   "platform": "linux",
-  "driver": "oscp-linux-v0.1",
-  "capabilities": ["frames", "actions", "events"],
+  "driver": "oscp-linux-v0.2",
+  "compositor": "x11_wayland",
+  "capabilities": ["render_tree", "actions", "events"],
   "features": {
-    "window_monitor": true,
+    "compositor_intercept": true,
+    "x11": true,
+    "wayland": true,
     "multi_window": true,
-    "multi_monitor": true,
-    "display_server": ["x11", "wayland"]
+    "multi_monitor": true
   }
 }
 ```
@@ -244,9 +380,9 @@ yay -S oscp
 ### Startup
 
 1. OSCP driver starts as systemd user service
-2. Driver detects display server
+2. Driver detects display server (X11/Wayland)
 3. Agent connects via Unix socket
-4. Frame streaming begins
+4. Render tree streaming begins
 
 ---
 
@@ -257,7 +393,8 @@ yay -S oscp
   "linux": {
     "capture": {
       "frame_rate": 30,
-      "display_server": "auto"
+      "display_server": "auto",
+      "compositor": "x11_wayland"
     },
     "input": {
       "method": "xtest",
@@ -273,35 +410,26 @@ yay -S oscp
 
 ---
 
-## Permissions
-
-**X11:**
-- No special permissions for window listing
-- Screen capture requires X11 access control
-
-**Wayland:**
-- Screenshot portal (xdg-desktop-portal)
-- Screen cast API (pipewire)
-
----
-
 ## Limitations
 
 | Limitation | Description |
 |------------|-------------|
-| X11 only | No TTY capture |
-| Wayland | Compositor-dependent support |
-| Some apps | May block capture |
+| TTY | No compositor access |
+| Wayland | Depends on compositor support |
+| Some games | DRM or anti-cheat |
+| Nested Wayland | Limited support |
 
 ---
 
 ## Status
 
-🚧 **V1 Target:** X11 window capture + raw geometry + basic actions
+🚧 **V1 Target:** X11 compositor interception + render tree + actions
 
 ---
 
 ## References
 
 - [X11 Protocol](https://www.x.org/docs/X11/x11protocol.pdf)
-- [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) - Wayland compositor library
+- [X Damage Extension](https://www.x.org/releases/X11R7.7/doc/kb/xwd.pdf)
+- [Wayland Protocols](https://wayland.freedesktop.org/)
+- [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots)

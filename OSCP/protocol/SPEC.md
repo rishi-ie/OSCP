@@ -1,6 +1,6 @@
 # OSCP Core Protocol Specification
 
-**Version:** 0.1.0
+**Version:** 0.2.0
 **Status:** Draft
 
 ---
@@ -9,7 +9,7 @@
 
 The OSCP protocol defines how platform drivers communicate with agent harnesses. It is transport-agnostic and can run over stdio, WebSocket, Unix domain sockets, TCP, or any bidirectional channel.
 
-**Principle:** Intercept at the source. Deliver the geometry. Agent provides the meaning.
+**Principle:** Intercept the compositor. Decode the render tree. Agent provides the meaning.
 
 ---
 
@@ -44,22 +44,23 @@ Each message is a length-prefixed JSON frame:
 
 ## Message Types
 
-### 1. Driver → Harness: Frame
+### 1. Driver → Harness: Render Tree
 
 Sent continuously at target frame rate (default 30fps, configurable).
 
 ```json
 {
-  "type": "frame",
+  "type": "render_tree",
   "frame_id": 12345,
   "timestamp": 1716576000000,
-  "surfaces": [
+  "windows": [
     {
-      "id": "surface_0x12345",
+      "id": "win_0x12345",
       "title": "Visual Studio Code",
       "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
+      "position": {"x": 100, "y": 50},
       "focused": true,
-      "render_ops": [
+      "ops": [
         {
           "id": "op_001",
           "bounds": {"x": 10, "y": 10, "w": 100, "h": 30},
@@ -71,13 +72,6 @@ Sent continuously at target frame rate (default 30fps, configurable).
           "bounds": {"x": 120, "y": 10, "w": 80, "h": 30},
           "z": 2,
           "texture_id": "0xAA02"
-        },
-        {
-          "id": "op_003",
-          "bounds": {"x": 10, "y": 50, "w": 200, "h": 100},
-          "z": 0,
-          "texture_id": "0xAA03",
-          "clip_bounds": {"x": 15, "y": 55, "w": 190, "h": 90}
         }
       ]
     }
@@ -98,7 +92,6 @@ Sent when the agent wants to interact with the system.
 {
   "type": "action",
   "action_id": "act_001",
-  "surface_id": "surface_0x12345",
   "action": {
     "kind": "click",
     "x": 50,
@@ -132,7 +125,7 @@ Confirms or reports failure of an action.
 
 ### 4. Harness → Driver: Request
 
-For explicit queries (e.g., get render op at position, list surfaces).
+For explicit queries (e.g., get render op at position).
 
 ```json
 {
@@ -156,7 +149,7 @@ Response to a request.
   "request_id": "req_001",
   "result": {
     "op_id": "op_042",
-    "surface_id": "surface_0x12345",
+    "window_id": "win_0x12345",
     "bounds": {"x": 90, "y": 190, "w": 50, "h": 20}
   }
 }
@@ -171,7 +164,7 @@ System-level events.
   "type": "event",
   "event": {
     "kind": "window_opened",
-    "surface_id": "surface_0x67890",
+    "window_id": "win_0x67890",
     "title": "New Window"
   }
 }
@@ -182,7 +175,7 @@ System-level events.
   "type": "event",
   "event": {
     "kind": "window_focused",
-    "surface_id": "surface_0x12345"
+    "window_id": "win_0x12345"
   }
 }
 ```
@@ -195,9 +188,9 @@ Initial connection and capability negotiation.
 // Harness → Driver: Hello
 {
   "type": "hello",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "agent": "pi-agent",
-  "capabilities": ["frames", "actions", "events"]
+  "capabilities": ["render_tree", "actions", "events"]
 }
 ```
 
@@ -205,10 +198,11 @@ Initial connection and capability negotiation.
 // Driver → Harness: Welcome
 {
   "type": "welcome",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "driver": "oscp-windows",
   "platform": "windows",
-  "capabilities": ["frames", "actions", "events"],
+  "compositor": "dwm",
+  "capabilities": ["render_tree", "actions", "events"],
   "settings": {
     "frame_rate": 30
   }
@@ -217,9 +211,48 @@ Initial connection and capability negotiation.
 
 ---
 
-## Render Operation
+## Render Tree
 
-A render operation represents a single draw call from the graphics pipeline.
+The render tree represents the full compositor scene — all windows and their render operations.
+
+### Structure
+
+```json
+{
+  "render_tree": {
+    "windows": [...],
+    "mouse": {...}
+  }
+}
+```
+
+### Window
+
+Represents a visible window in the compositor scene.
+
+```json
+{
+  "id": "win_0x12345",
+  "title": "Visual Studio Code",
+  "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
+  "position": {"x": 100, "y": 50},
+  "focused": true,
+  "ops": [...]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique window identifier |
+| `title` | string | Window title |
+| `bounds` | object | Window size (w, h) |
+| `position` | object | Window position (x, y) |
+| `focused` | boolean | Is window focused |
+| `ops` | array | Render operations in this window |
+
+### Render Operation
+
+A render operation represents a single draw call from the compositor.
 
 ```json
 {
@@ -242,33 +275,7 @@ A render operation represents a single draw call from the graphics pipeline.
 **Coordinates:**
 - All coordinates are in physical pixels
 - Origin is top-left of primary monitor
-- Bounds are relative to the surface (window)
-
----
-
-## Surface
-
-A surface represents a window or visual region.
-
-```json
-{
-  "id": "surface_0x12345",
-  "title": "Visual Studio Code",
-  "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
-  "position": {"x": 100, "y": 50},
-  "focused": true,
-  "render_ops": [...]
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique surface identifier |
-| `title` | string | Window title |
-| `bounds` | object | Window size (w, h) |
-| `position` | object | Window position (x, y) |
-| `focused` | boolean | Is window focused |
-| `render_ops` | array | List of render operations |
+- Bounds are relative to the window
 
 ---
 
@@ -357,27 +364,18 @@ Drag from start to end position.
 }
 ```
 
-### Hotkey Sequence
-
-```json
-{
-  "kind": "hotkey",
-  "keys": ["ctrl", "shift", "p"]
-}
-```
-
 ---
 
 ## Event Types
 
 | Event | Description |
 |-------|-------------|
-| `window_opened` | New surface created |
-| `window_closed` | Surface removed |
-| `window_focused` | Surface gained focus |
-| `window_unfocused` | Surface lost focus |
-| `window_moved` | Surface position changed |
-| `window_resized` | Surface size changed |
+| `window_opened` | New window appeared |
+| `window_closed` | Window removed |
+| `window_focused` | Window gained focus |
+| `window_unfocused` | Window lost focus |
+| `window_moved` | Window position changed |
+| `window_resized` | Window size changed |
 | `key_pressed` | Keyboard input received |
 | `mouse_moved` | Mouse moved |
 | `mouse_clicked` | Mouse button pressed |
@@ -411,7 +409,7 @@ Drag from start to end position.
 {
   "type": "error",
   "code": "WINDOW_NOT_FOUND",
-  "message": "Surface surface_0x99999 not found",
+  "message": "Window win_0x99999 not found",
   "recoverable": true
 }
 ```
@@ -420,7 +418,7 @@ Drag from start to end position.
 |------|-------------|
 | `TRANSPORT_ERROR` | Connection lost or broken |
 | `SERIALIZATION_ERROR` | Invalid JSON |
-| `SURFACE_NOT_FOUND` | Target surface doesn't exist |
+| `WINDOW_NOT_FOUND` | Target window doesn't exist |
 | `ACTION_FAILED` | Action execution failed |
 | `TIMEOUT` | Operation timed out |
 
@@ -434,7 +432,7 @@ All coordinates are in **physical pixels** relative to the **primary display's t
 - X increases to the right
 - Y increases downward
 - Multi-monitor: coordinates extend beyond primary bounds
-- Element bounds are relative to their surface (window)
+- Element bounds are relative to their window
 
 ---
 
