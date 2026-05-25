@@ -1,7 +1,7 @@
 # OSCP — Operating System Context Protocol
 
 **Version:** 0.2.0 (Draft)
-**Status:** Design finalization complete
+**Status:** Design Finalized
 
 ---
 
@@ -9,7 +9,20 @@
 
 OSCP is a foundational protocol for agent-native OS interaction. It intercepts the compositor's render pipeline at the OS level and delivers raw render operations to agents — enabling them to see and interact with the full desktop just like humans.
 
-**Goal:** Replace unreliable VLM-based screen observation with OS-level compositor interception. No pixels. No screenshots. Just decoded geometry from one interception point covering all apps.
+**Goal:** Replace unreliable VLM-based screen observation with OS-level compositor interception. No pixels. No screenshots. Just decoded geometry.
+
+---
+
+## Scope (V1)
+
+**Platforms:** macOS and Linux only
+
+| Platform | Compositor | Intercept Method |
+|----------|-----------|------------------|
+| **macOS** | Window Server | Layer tree extraction |
+| **Linux** | X11/Wayland | Scene graph |
+
+Windows support deferred to V2 (UIA + Win32 hybrid approach).
 
 ---
 
@@ -33,38 +46,21 @@ Compositor ─► Render tree ─► Decode ─► Agent knows exact positions
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     AGENT HARNESS (pi)                          │
-│                         │                                      │
-│            ┌────────────┼────────────┐                          │
-│            │            │            │                          │
-│            ▼            ▼            ▼                          │
-│     ┌──────────┐  ┌──────────┐  ┌──────────┐                    │
-│     │ Windows  │  │  macOS   │  │  Linux   │                    │
-│     │ Platform │  │ Platform │  │ Platform │                    │
-│     │   Driver │  │   Driver │  │   Driver │                    │
-│     └──────────┘  └──────────┘  └──────────┘                    │
-│            │            │            │                          │
-│            └────────────┼────────────┘                          │
-│                         │                                      │
-│                    Protocol Layer                               │
+│                                                                 │
+│            ┌────────────────┬────────────────┐                 │
+│            │                │                │                  │
+│            ▼                ▼                ▼                  │
+│     ┌──────────┐      ┌──────────┐                                 │
+│     │  macOS   │      │  Linux   │                                 │
+│     │ Platform │      │ Platform │                                 │
+│     │  Driver  │      │  Driver  │                                 │
+│     └──────────┘      └──────────┘                                 │
+│            │                │                                      │
+│            └────────────────┴────────────────┘                    │
+│                         │                                        │
+│                    Protocol Layer                                │
 └─────────────────────────────────────────────────────────────────┘
 ```
-
-### The Intercept Point
-
-```
-App A (OpenGL) ─┐
-App B (Vulkan)  ─┼─► Compositor ─► INTERCEPT ─► Decode ─► Agent
-App C (DXGI)    ─┘       ↑
-                    One point. All apps.
-```
-
-### Layers
-
-| Layer | Description |
-|-------|-------------|
-| **Platform Driver** | OS-level compositor interception |
-| **Protocol** | Transport, framing, message types |
-| **Agent Interface** | Unified API for any agent |
 
 ---
 
@@ -83,7 +79,7 @@ App C (DXGI)    ─┘       ↑
 |-------|------|-------------|
 | `id` | string | Window identifier |
 | `title` | string | Window title |
-| `bounds` | object | Window bounds (x, y, w, h) |
+| `bounds` | object | Window bounds |
 | `focused` | boolean | Window focus state |
 | `ops` | array | Render operations in this window |
 
@@ -93,27 +89,13 @@ App C (DXGI)    ─┘       ↑
 |-------|------|-------------|
 | `id` | string | Unique operation identifier |
 | `bounds` | object | Position (x, y) and size (w, h) |
-| `z` | number | Z-index (render order, higher = on top) |
+| `z` | number | Z-index (render order) |
 | `texture_id` | string | Texture identifier |
 | `clip_bounds` | object | Optional clipping rect |
-
-### Mouse
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `x` | number | Cursor X position |
-| `y` | number | Cursor Y position |
-| `hovered_op_id` | string | Render op under cursor |
 
 ---
 
 ## Platform-Specific Approaches
-
-### Windows
-
-**Compositor:** Desktop Window Manager (DWM)
-**Intercept:** Graphics Capture API / DWM scene capture
-**Input:** SendInput, PostMessage
 
 ### macOS
 
@@ -124,36 +106,32 @@ App C (DXGI)    ─┘       ↑
 ### Linux
 
 **Compositor:** X11 / Wayland
-**Intercept:** X11 damage tracking / Wayland compositor protocols
+**Intercept:** X11 window tree + Wayland compositor protocols
 **Input:** XTest
 
 ---
 
-## Why Compositor Interception?
+## Why macOS and Linux?
 
-### Per-App Hook vs Compositor Interception
+### macOS
+- Window Server is introspectable
+- Layer tree accessible via Core Graphics APIs
+- CGWindowListCopyWindowInfo provides metadata + structure
 
-| Aspect | Per-App Hook | Compositor Interception |
-|--------|--------------|-------------------------|
-| **Coverage** | 85% | 100% |
-| **Interception point** | Each app | One global |
-| **OpenGL** | ❌ No | ✅ Yes |
-| **Vulkan** | ❌ No | ✅ Yes |
-| **Games** | ❌ No | ✅ Yes |
-| **Anti-cheat** | ❌ Blocked | ✅ Captures output |
-| **Complexity** | High | Lower |
-| **Data** | Per-app ops | Global scene tree |
+### Linux (X11)
+- X11 was designed for introspection
+- Full window tree, properties, and region tracking
+- No permissions needed (same user)
 
-### Screen Recording vs Compositor Interception
+### Linux (Wayland)
+- Compositor protocols expose surface hierarchy
+- DMABUF for texture tracking
+- Fallback to X11 if needed
 
-| Aspect | Screen Recording | Compositor Interception |
-|--------|-----------------|------------------------|
-| **Output** | Pixels | Render ops |
-| **VLM needed** | Yes | No |
-| **Speed** | Slow (2-5 sec) | Fast (<50ms) |
-| **Cost** | High (tokens) | Low (raw data) |
-| **Precision** | Fuzzy | Exact |
-| **Structural data** | None | Full |
+### Windows (Deferred to V2)
+- No documented APIs expose render ops from DWM
+- Would require undocumented hooks or kernel driver
+- UIA + Win32 hybrid possible but not true render ops
 
 ---
 
@@ -162,10 +140,10 @@ App C (DXGI)    ─┘       ↑
 | Phase | Description |
 |-------|-------------|
 | **V0** | Protocol design and spec finalization |
-| **V1** | Windows compositor driver (DWM) |
-| **V2** | macOS compositor driver |
-| **V3** | Linux compositor driver |
-| **V4** | Cross-platform unification and agent SDK |
+| **V1** | macOS platform driver (Window Server) |
+| **V1** | Linux platform driver (X11/Wayland) |
+| **V2** | Windows platform driver (UIA + Win32 hybrid) |
+| **V3** | Agent SDKs and integration |
 
 ---
 
@@ -177,7 +155,6 @@ OSCP/
 │   └── SPEC.md        # Core protocol
 │
 ├── platforms/          # OS-specific drivers
-│   ├── windows/       # Windows compositor intercept
 │   ├── macos/         # macOS Window Server intercept
 │   └── linux/         # Linux compositor intercept
 │
@@ -191,7 +168,7 @@ OSCP/
 
 ## Status
 
-🚧 **Phase 0** — Protocol design complete. Compositor interception approach finalized.
+🚧 **Phase 0** — Design complete. macOS and Linux V1 scope defined. Windows deferred.
 
 ---
 

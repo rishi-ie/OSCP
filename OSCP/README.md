@@ -1,7 +1,7 @@
 # OSCP — Operating System Context Protocol
 
 **Version:** 0.2.0
-**Status:** Early Design
+**Status:** Design Finalized
 
 ---
 
@@ -9,47 +9,26 @@
 
 > Make agents first-class citizens of operating systems designed for humans.
 
-Today, agents attempt to interact with computers using VLMs — observing pixels, guessing element positions, and reacting to visual output. This approach is **fragile, slow, and unreliable**.
+OSCP intercepts the compositor's render pipeline at the OS level and delivers raw render operations to agents. No pixels. No screenshots. No VLM.
 
-OSCP intercepts the compositor's render pipeline at the OS level — not per-app — and delivers raw render operations to agents. No pixels. No screenshots. Just decoded geometry.
+---
+
+## Scope (V1)
+
+**Platforms:** macOS and Linux only
+
+| Platform | Compositor | Intercept Method | Status |
+|----------|-----------|------------------|--------|
+| **macOS** | Window Server | Layer tree extraction | V1 Target |
+| **Linux** | X11/Wayland | Scene graph | V1 Target |
+| **Windows** | DWM | Deferred | V2 |
 
 ---
 
 ## Principle
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                                                                 │
-│   Intercept the compositor. Decode the render tree.             │
-│   Agent provides the meaning.                                   │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**VLM approach:**
-```
-Compositor ─► Pixels ─► VLM guesses ─► Agent guesses
-```
-
-**OSCP approach:**
-```
-Compositor ─► Render tree ─► Decode ─► Agent knows
-             (intercept here)  (ops)     (exact positions)
-```
-
-**Per-app hook approach:**
-```
-App A ─► DXGI ─► Shared memory ─► Decoder ─► Agent (85% coverage)
-App B ─► OpenGL ─► ❌ missed
-App C ─► Vulkan ─► ❌ missed
-```
-
-**OSCP approach:**
-```
-App A ─┐
-App B ─┼─► Compositor ─► INTERCEPT ─► Decode ─► Agent (100% coverage)
-App C ─┘        ↑
-              One point. All apps.
+Intercept the compositor. Decode the render tree. Agent provides the meaning.
 ```
 
 ---
@@ -62,15 +41,12 @@ App C ─┘        ↑
 │                                                                 │
 │   Agent receives:                                               │
 │   {                                                             │
-│     "render_tree": {                                            │
-│       "windows": [{                                             │
-│         "id": "win_1",                                          │
-│         "title": "VS Code",                                     │
-│         "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},       │
-│         "ops": [{"id": "op_1", "bounds": {...}, "z": 0}]         │
-│       }]                                                        │
-│     },                                                          │
-│     "mouse": {"x": 540, "y": 320}                               │
+│     "windows": [{                                               │
+│       "id": "win_1",                                            │
+│       "title": "VS Code",                                       │
+│       "ops": [{"id": "op_1", "bounds": {...}, "z": 0}]         │
+│     }],                                                         │
+│     "mouse": {"x": 540, "y": 320}                              │
 │   }                                                            │
 │                                                                 │
 │   Agent sends: {"action": "click", "x": 100, "y": 200}         │
@@ -78,60 +54,29 @@ App C ─┘        ↑
                              │
                        OSCP Protocol
                              │
-    ┌────────────────────────┼────────────────────────┐
-    │                        │                        │
-    ▼                        ▼                        ▼
-┌──────────┐          ┌──────────┐          ┌──────────┐
-│ Windows  │          │  macOS   │          │  Linux   │
-│ Platform │          │ Platform │          │ Platform │
-│  Driver  │          │  Driver  │          │  Driver  │
-└──────────┘          └──────────┘          └──────────┘
-     │                     │                     │
-     ▼                     ▼                     ▼
- DWM/Compositor      Window Server         X11/Wayland
-   (global)           (global)            Compositor
+         ┌───────────────────┴───────────────────┐
+         │                                       │
+         ▼                                       ▼
+┌──────────────────┐                 ┌──────────────────┐
+│      macOS       │                 │      Linux       │
+│     Platform     │                 │     Platform     │
+│      Driver      │                 │      Driver      │
+└──────────────────┘                 └──────────────────┘
+         │                                       │
+         ▼                                       ▼
+ Window Server                     X11 / Wayland
+  Layer Tree                      Compositor
 ```
 
 ---
 
-## Key Differences from Per-App Hook
+## Coverage
 
-| Aspect | Per-App Hook | OSCP (Compositor) |
-|--------|--------------|-------------------|
-| **Coverage** | 85% (DirectX only) | 100% (all apps) |
-| **Interception point** | Each app's DXGI | Compositor output |
-| **OpenGL** | ❌ No | ✅ Yes |
-| **Vulkan** | ❌ No | ✅ Yes |
-| **Games** | ❌ No | ✅ Yes |
-| **Complexity** | High (inject each app) | Lower (one global point) |
-| **Data** | Per-app render ops | Global scene tree |
-
----
-
-## What Agent Receives
-
-| Field | Description |
-|-------|-------------|
-| `render_tree` | Full compositor scene tree |
-| `windows` | All visible windows with metadata |
-| `ops` | Render operations per window (bounds, z, texture) |
-| `mouse` | Cursor position and hovered element |
-
-**Agent provides:**
-- Element semantics (button vs label vs input)
-- Interaction logic (what's clickable)
-- State inference (enabled, disabled, checked)
-- Visual reasoning (from geometry patterns)
-
----
-
-## Platforms
-
-| Platform | Compositor | Intercept Method | Status |
-|----------|-----------|------------------|--------|
-| **Windows** | DWM | Graphics Capture API / DWM internals | Draft |
-| **macOS** | Window Server | Layer tree extraction | Draft |
-| **Linux** | X11/Wayland | Scene graph / compositor protocols | Draft |
+| Platform | Coverage | Notes |
+|----------|----------|-------|
+| **macOS** | ~95% | AppKit, Metal, all renderers |
+| **Linux** | ~90% | X11 + Wayland compositors |
+| **Windows** | Deferred | UIA + Win32 for V2 |
 
 ---
 
@@ -140,14 +85,15 @@ App C ─┘        ↑
 ### Install
 
 ```bash
-# Windows
-winget install OSCP.Windows
-
 # macOS
 brew install oscp
 
 # Linux
+# apt
 sudo apt install oscp
+
+# dnf
+sudo dnf install oscp
 ```
 
 ### Connect
@@ -155,9 +101,11 @@ sudo apt install oscp
 ```python
 import oscp
 
-client = oscp.connect("tcp://localhost:9876")  # Windows
-# or
-client = oscp.connect("unix:///tmp/oscp.sock")  # macOS/Linux
+# macOS: Unix socket
+client = oscp.connect("unix:///tmp/oscp.sock")
+
+# Linux: Unix socket
+client = oscp.connect("unix:///tmp/oscp.sock")
 
 # Receive render tree
 async for tree in client.stream():
@@ -172,75 +120,21 @@ client.click(x=100, y=200)
 
 ---
 
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [SPEC.md](SPEC.md) | Project overview and structure |
-| [protocol/SPEC.md](protocol/SPEC.md) | Core protocol: messages, transport, types |
-| [platforms/windows/SPEC.md](platforms/windows/SPEC.md) | Windows compositor intercept |
-| [platforms/macos/SPEC.md](platforms/macos/SPEC.md) | macOS Window Server intercept |
-| [platforms/linux/SPEC.md](platforms/linux/SPEC.md) | Linux compositor intercept |
-| [agents/SPEC.md](agents/SPEC.md) | Agent integration guidelines |
-
----
-
 ## Project Structure
 
 ```
 OSCP/
-├── README.md                 # Project overview
-├── SPEC.md                   # Main specification
-├── protocol/                 # Protocol specification
-│   └── SPEC.md              # Core protocol
-├── platforms/               # OS-specific drivers
-│   ├── windows/             # Windows compositor intercept
-│   ├── macos/               # macOS Window Server intercept
-│   └── linux/               # Linux compositor intercept
-├── agents/                   # Agent integration
-│   └── SPEC.md             # Agent SDK guidelines
-└── MEMORY/                   # Project context
+├── README.md
+├── SPEC.md
+├── protocol/SPEC.md           # Core protocol
+├── platforms/
+│   ├── macos/SPEC.md         # Window Server intercept
+│   └── linux/SPEC.md         # X11/Wayland compositor
+├── agents/SPEC.md
+└── MEMORY/
     ├── project-overview.md
     └── DECISIONS.md
 ```
-
----
-
-## Why Not Per-App Hook?
-
-Per-app hooking (DXGI hook) misses:
-- OpenGL applications
-- Vulkan applications
-- Games with anti-cheat
-- Some legacy GDI apps
-- Java Swing with software rendering
-
-OSCP intercepts at the compositor — one point, all apps.
-
----
-
-## Why Not Screenshots?
-
-Screenshots reintroduce VLM dependency:
-- Slow (2-5 seconds per frame)
-- Expensive (VLM token cost)
-- Unreliable (VLM guessing)
-- No structural data (just pixels)
-
-OSCP delivers render operations — exact geometry, not fuzzy pixels.
-
----
-
-## Roadmap
-
-| Phase | Milestone |
-|-------|-----------|
-| **V0.1** | Protocol and spec finalization |
-| **V0.2** | Windows compositor driver |
-| **V0.3** | macOS Window Server driver |
-| **V0.4** | Linux compositor driver |
-| **V1.0** | Cross-platform unification |
-| **V1.1** | Agent SDKs (OpenClaw, HermesAgent, PyAgent) |
 
 ---
 
@@ -249,13 +143,14 @@ OSCP delivers render operations — exact geometry, not fuzzy pixels.
 > Humans interact through interfaces.
 > Agents interact through meaning.
 
-OSCP provides the geometry from the compositor's render tree. Agent provides the meaning. Execution remains deterministic.
+OSCP provides geometry from the compositor's render tree. Agent provides the meaning.
 
 ---
 
 ## Status
 
-🚧 **Phase 0** — Specifications updated. Compositor interception approach.
+🚧 **V1 Development** — macOS and Linux drivers
+🚧 **V2 Planning** — Windows (UIA + Win32 hybrid)
 
 ---
 

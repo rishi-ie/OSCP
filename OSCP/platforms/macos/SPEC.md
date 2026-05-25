@@ -7,7 +7,7 @@
 
 ## Overview
 
-The macOS platform driver provides OSCP protocol implementation for macOS 12+ (Monterey and later). It intercepts the Window Server compositor at the OS level and delivers raw render operations to agents.
+The macOS platform driver provides OSCP protocol implementation for macOS 12+ (Monterey and later). It intercepts the Window Server compositor's layer tree at the OS level and delivers raw render operations to agents.
 
 **Principle:** Intercept the compositor. Decode the render tree. Agent provides the meaning.
 
@@ -36,11 +36,6 @@ The macOS platform driver provides OSCP protocol implementation for macOS 12+ (M
 │   │   Window 2 ──► CALayer ──► Compositor                   │   │
 │   │   Window 3 ──► CALayer ──► Compositor                   │   │
 │   │                                                         │   │
-│   │            ┌──────────────────────┐                      │   │
-│   │            │   LAYER TREE         │                      │   │
-│   │            │   (intercept here)   │                      │   │
-│   │            └──────────────────────┘                      │   │
-│   │                                                         │   │
 │   │            INTERCEPT ─► DECODE ─► AGENT                  │   │
 │   └─────────────────────────────────────────────────────────┘   │
 │                             │                                   │
@@ -53,15 +48,6 @@ The macOS platform driver provides OSCP protocol implementation for macOS 12+ (M
 
 ## Intercept Approach
 
-### Why Not Per-App Hook?
-
-Per-app Metal/OpenGL hook misses:
-- AppKit apps (uses Quartz/Core Animation)
-- Games with Metal
-- Some legacy Carbon apps
-
-**OSCP intercepts the Window Server layer tree instead — one point, all apps.**
-
 ### How macOS Compositor Works
 
 1. Every window has a `CALayer` tree
@@ -71,30 +57,33 @@ Per-app Metal/OpenGL hook misses:
 
 ### Intercept Methods
 
-| Method | Description | Coverage |
+| Method | Description | Provides |
 |--------|-------------|----------|
-| **CGWindowListCreateImage** | ❌ Gives pixels, not ops | - |
-| **CALayer tree inspection** | Extract layer properties | Window metadata |
-| **IOSurface interception** | Intercept shared surfaces | Texture IDs |
-| **Window Server plugin** | Hook into compositor | Full scene |
+| `CGWindowListCopyWindowInfo` | Window enumeration | Metadata, bounds, z-order |
+| `CGWindowListCreateImage` | ❌ Gives pixels | NOT USED |
+| `CGWindowID` | Window identifier | Stable window ID |
+| Window Server layer tree | Layer properties | Positions, sizes, hierarchy |
 
-### Approach: Window Server Layer Tree
+**No pixels. No screenshots. Just layer properties and geometry.**
 
-The Window Server maintains a layer tree for all windows. We intercept this at the compositor level:
+### Layer Properties We Extract
+
+For each window's layer tree:
 
 ```swift
-// Conceptual approach
-class WindowServerInterceptor {
-    // Hook into Window Server's layer tree
-    // Extract CALayer properties from each window
-    // Decode render operations from layer hierarchy
-    
-    func captureScene() -> RenderTree {
-        // Get all windows from Window Server
-        // For each window, extract CALayer tree
-        // Build render tree with positions and z-order
-        // Return decoded render ops
-    }
+struct LayerInfo {
+    id: String              // Layer identifier
+    bounds: CGRect          // Position and size
+    z_index: Int            // Render order
+    content: LayerContent   // What the layer contains
+    children: [LayerInfo]   // Child layers
+}
+
+enum LayerContent {
+    image(texture_id: String, size: CGSize)
+    text(content: String, font: String?, size: CGFloat?)
+    solid(color: String)
+    composited(children: [LayerInfo])
 }
 ```
 
@@ -106,26 +95,25 @@ class WindowServerInterceptor {
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Platform Driver                             │
 │                                                                 │
-│  ┌───────────────┐           ┌───────────────┐                  │
-│  │  Window       │           │  Input Engine │                  │
-│  │  Server       │           │  (Swift)      │                  │
-│  │  Interceptor  │           │               │                  │
-│  │  (Swift)      │           │               │                  │
-│  └───────┬───────┘           └───────┬───────┘                  │
-│          │                           │                          │
-│          └──────────┬────────────────┘                          │
-│                     │                                          │
-│              ┌──────▼──────┐                                   │
-│              │  Render    │                                   │
-│              │  Decoder   │                                   │
-│              │  (Rust)    │                                   │
-│              └──────┬──────┘                                   │
-│                     │                                          │
-│              ┌──────▼──────┐                                   │
-│              │  Protocol   │                                   │
-│              │  Server     │                                   │
-│              │  (Unix/TCP) │                                   │
-│              └─────────────┘                                   │
+│  ┌───────────────────┐          ┌───────────────────┐          │
+│  │  Window Server    │          │  Input Engine     │          │
+│  │  Layer Interceptor│          │  (Swift/Rust)     │          │
+│  │  (Swift)          │          │                   │          │
+│  └─────────┬─────────┘          └─────────┬─────────┘          │
+│            │                               │                     │
+│            └───────────────┬───────────────┘                     │
+│                            │                                     │
+│                    ┌───────▼───────┐                             │
+│                    │   Render      │                             │
+│                    │   Decoder     │                             │
+│                    │   (Rust)      │                             │
+│                    └───────┬───────┘                             │
+│                            │                                     │
+│                    ┌───────▼───────┐                             │
+│                    │   Protocol    │                             │
+│                    │   Server      │                             │
+│                    │   (Unix)      │                             │
+│                    └───────────────┘                             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -133,15 +121,48 @@ class WindowServerInterceptor {
 
 ## Components
 
-### 1. Window Server Interceptor (Swift)
+### 1. Window Server Layer Interceptor (Swift)
 
-**Purpose:** Intercept the Window Server compositor's layer tree.
+**Purpose:** Extract layer tree from Window Server.
 
 **What it captures:**
-- All visible windows and their metadata
-- CALayer hierarchy per window
-- Layer properties (position, size, z-order, texture)
-- Compositor transforms and effects
+- All visible windows via `CGWindowListCopyWindowInfo`
+- Layer hierarchy for each window
+- Layer properties: bounds, z-order, content type
+
+**Implementation:**
+```swift
+func captureScene() -> [WindowLayers] {
+    // Get all on-screen windows
+    let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)!
+    
+    for window in windowList as! [CFDictionary] {
+        let windowID = window[kCGWindowNumber]!
+        let bounds = window[kCGWindowBounds] as! CGRect
+        let layer = window[kCGWindowLayer]!
+        
+        // Extract layer properties
+        extractLayerTree(for: windowID)
+    }
+}
+```
+
+### 2. Render Decoder (Rust)
+
+**Purpose:** Convert layer tree to render operations.
+
+**Pipeline:**
+```
+1. Capture Window Server layer tree
+   ↓
+2. Extract window metadata
+   ↓
+3. For each window, traverse layer hierarchy
+   ↓
+4. Flatten layers into render operations
+   ↓
+5. Output ops with bounds, z, texture_id
+```
 
 **Output:**
 ```json
@@ -158,7 +179,7 @@ class WindowServerInterceptor {
           "id": "op_001",
           "bounds": {"x": 10, "y": 10, "w": 100, "h": 30},
           "z": 1,
-          "texture_id": "0xAA01"
+          "texture_id": "layer_0x1001"
         }
       ]
     }
@@ -166,31 +187,12 @@ class WindowServerInterceptor {
 }
 ```
 
-### 2. Render Decoder (Rust)
-
-**Purpose:** Decode the layer tree into render operations.
-
-**Pipeline:**
-```
-1. Capture Window Server layer tree
-   ↓
-2. Extract window list and metadata
-   ↓
-3. For each window, traverse CALayer hierarchy
-   ↓
-4. Extract layer positions, sizes, z-order, textures
-   ↓
-5. Build render tree
-   ↓
-6. Output render operations
-```
-
-### 3. Input Engine (Swift)
+### 3. Input Engine (Swift/Rust)
 
 **Purpose:** Execute agent actions on macOS.
 
 **Methods:**
-- `CGEvent`: Mouse and keyboard (global)
+- `CGEvent`: Mouse and keyboard
 
 **Supported Actions:**
 - Mouse: click, double-click, move, drag, scroll
@@ -206,7 +208,6 @@ class WindowServerInterceptor {
 | Metal apps (games) | ✅ Yes | Via Window Server |
 | AppKit + Metal (modern) | ✅ Yes | Via Window Server |
 | Legacy Carbon apps | ⚠️ Limited | Partial support |
-| DRM content | ❌ No | Protected at source |
 | Screen Sharing | ❌ No | Different compositor |
 
 **Coverage: ~95% of desktop apps**
@@ -217,26 +218,21 @@ class WindowServerInterceptor {
 
 ### Required Permissions
 
-For OSCP to work on macOS:
+**"Screen Recording" (misleading name)** — Actually enables:
+- Window Server layer tree access
+- CGWindowListCopyWindowInfo with full info
+- CALayer property extraction
 
-1. **Screen Recording** — Required for Window Server access
-   - System Preferences → Privacy & Security → Screen Recording
-   - Needed for layer tree interception
+**Accessibility** — For input injection.
 
-2. **Accessibility** — Required for input injection
-   - System Preferences → Privacy & Security → Accessibility
+### Permission Flow
 
-### Permission Check
-
-```swift
-// Check screen recording permission
-let hasScreenRecording = CGPreflightScreenCaptureAccess()
-
-// Request screen recording permission
-CGRequestScreenCaptureAccess()
-
-// Check accessibility permission
-let hasAccessibility = AXIsProcessTrusted()
+```
+1. Driver starts
+2. Check CGPreflightScreenCaptureAccess()
+3. If false → notify user, open System Preferences
+4. User enables OSCP in Privacy & Security
+5. Driver proceeds
 ```
 
 ---
@@ -246,7 +242,6 @@ let hasAccessibility = AXIsProcessTrusted()
 ### Transport
 
 Default: `unix:///tmp/oscp.sock`
-Alternative: `tcp://localhost:9876`
 
 ### Message Framing
 
@@ -264,7 +259,6 @@ Length-prefixed JSON:
   "compositor": "window_server",
   "capabilities": ["render_tree", "actions", "events"],
   "features": {
-    "compositor_intercept": true,
     "layer_tree": true,
     "multi_window": true,
     "multi_monitor": true
@@ -274,19 +268,16 @@ Length-prefixed JSON:
 
 ---
 
-## Installation & Startup
-
-### Installation
+## Installation
 
 ```bash
-# Single command install (V1 target)
 brew install oscp
 ```
 
 ### Startup
 
-1. User grants Screen Recording and Accessibility permissions
-2. OSCP driver starts as background process
+1. User grants permission (one-time)
+2. Driver starts as launchd agent
 3. Agent connects via Unix socket
 4. Render tree streaming begins
 
@@ -304,10 +295,6 @@ brew install oscp
     "input": {
       "method": "cgevent",
       "action_delay_ms": 0
-    },
-    "permissions": {
-      "auto_request": true,
-      "require_all": true
     }
   }
 }
@@ -315,25 +302,14 @@ brew install oscp
 
 ---
 
-## Limitations
-
-| Limitation | Description |
-|------------|-------------|
-| Screen Recording permission | Required for layer tree access |
-| Accessibility permission | Required for input injection |
-| DRM content | Protected at source |
-| Screen Sharing | Different compositor |
-
----
-
 ## Status
 
-🚧 **V1 Target:** Window Server layer tree interception + render tree + actions
+🚧 **V1 Target:** Window Server layer tree extraction + render ops + actions
 
 ---
 
 ## References
 
-- [Core Animation Layer Tree](https://developer.apple.com/documentation/quartzcore)
-- [CGWindowListCreateImage](https://developer.apple.com/documentation/application-services/1503048-cgwindowlistcreateimage)
+- [CGWindowListCopyWindowInfo](https://developer.apple.com/documentation/application-services/1503048-cgwindowlistcopywindowinfo)
+- [Core Animation Layer Tree](https://developer.apple.com/documentation/quartzcore/calayer)
 - [CGEvent](https://developer.apple.com/documentation/coregraphics/cgevent)
