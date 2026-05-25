@@ -1,7 +1,7 @@
 # OSCP — Operating System Context Protocol
 
-**Version:** 0.2.0
-**Status:** Design Finalized
+**Version:** 0.3.0
+**Status:** Architecture Finalized
 
 ---
 
@@ -9,7 +9,7 @@
 
 > Make agents first-class citizens of operating systems designed for humans.
 
-OSCP unifies existing OS accessibility APIs into a real-time, deterministic, agent-native interface. The hard parts are already built — OSCP adds streaming, unification, and error handling.
+OSCP is a **wrapper + streaming layer** on top of existing OS accessibility APIs. The hard parts are already built — OSCP adds streaming, unification, and error handling.
 
 ---
 
@@ -19,125 +19,160 @@ OSCP unifies existing OS accessibility APIs into a real-time, deterministic, age
 
 ---
 
-## Key Insight
-
-```
-EXISTING TOOLS:
-├── AXUIElement (macOS) — already extracts semantic tree
-├── AT-SPI2 (Linux) — already extracts semantic tree
-├── UIAutomation (Windows) — already extracts semantic tree
-└── These tools work, they're proven
-
-OSCP'S CONTRIBUTION:
-├── Real-time streaming (30fps) — existing tools are one-shot
-├── Unified protocol — existing tools are per-platform
-├── Error handling — existing tools fail silently
-└── Agent-native output — existing tools are human-centric
-```
-
----
-
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     AGENT HARNESS                           │
-│                                                                 │
-│   Agent receives:                                               │
-│   {                                                             │
-│     "windows": [{                                               │
-│       "id": "win_1",                                            │
-│       "title": "VS Code",                                       │
-│       "elements": [...],                                       │
-│       "confidence": 0.95                                       │
-│     }],                                                         │
-│     "tree_analysis": {...}                                    │
-│   }                                                            │
-└─────────────────────────────────────────────────────────────┘
-                             │
-                       OSCP Protocol
-                             │
-    ┌────────────────────────┼────────────────────────┐
-    │                        │                        │
-    ▼                        ▼                        ▼
-┌──────────┐          ┌──────────┐          ┌──────────┐
-│  macOS   │          │  Linux   │          │ Windows  │
-│ Platform │          │ Platform │          │ Platform │
-│  Driver  │          │  Driver  │          │  Driver  │
-└──────────┘          └──────────┘          └──────────┘
-     │                     │                     │
-     ▼                     ▼                     ▼
-  EXISTING              EXISTING              EXISTING
-  AXUIElement          AT-SPI2               UIAutomation
-  (already built)     (already built)      (already built)
+AGENT HARNESS
+     │
+OSCP Protocol
+     │
+┌────────────────────────────────────────────────────────────┐
+│              OSCP PLATFORM DRIVER                        │
+│                                                            │
+│   ┌─────────────┐  ┌──────────────┐  ┌─────────────────┐ │
+│   │  STREAMING  │  │    ERROR     │  │      INPUT      │ │
+│   │   ENGINE    │  │   HANDLER    │  │     ENGINE      │ │
+│   └────────┬─────┘  └──────┬──────┘  └────────┬────────┘ │
+│           │                │                  │           │
+│           │         ┌───────▼───────┐          │           │
+│           │         │    TREE       │◄─────────┘           │
+│           │         │   ANALYZER    │                      │
+│           │         └───────┬───────┘                      │
+│           │                 │                              │
+│           │    ┌────────────┴────────────┐                 │
+│           │    │                         │                 │
+│           │    ▼                         ▼                 │
+│           │   ▼                           ▼                 │
+│   ┌───────┴──────────────────┐  ┌─────────────────────────┐│
+│   │   PRIMARY CAPTURE         │  │    FALLBACK METHODS      ││
+│   │   (AXUIElement/AT-SPI2)   │  │    (CDP/X11/Position)    ││
+│   └────────────────────────────┘  └────────────────────────┘│
+└────────────────────────────────────────────────────────────┘
+     │
+Native OS APIs
 ```
 
 ---
 
-## Per-Platform Implementation
+## What OSCP Wraps
 
-| Platform | Wraps | Coverage | Time |
-|----------|-------|----------|------|
-| **macOS** | AXUIElement | 95% | 4-6 weeks |
-| **Linux** | AT-SPI2 + X11 | 90-95% | 6-8 weeks |
-| **Windows** | UIAutomation | 90% | 4-6 weeks |
+| Platform | Wraps | Coverage |
+|----------|-------|----------|
+| **macOS** | AXUIElement | 95% |
+| **Linux** | AT-SPI2 + X11 | 90-95% |
+| **Windows** | UIAutomation | 90% |
 
 ---
 
 ## What OSCP Adds
 
-| Feature | Description |
-|---------|-------------|
-| **Real-time streaming** | 30fps render tree updates |
-| **Unified protocol** | Same format on all platforms |
-| **Error handling** | Fallback hierarchy for empty trees |
-| **Confidence scoring** | Per-element confidence metrics |
-| **Human handoff** | Escalation for edge cases |
+| Feature | Existing Tools | OSCP |
+|---------|----------------|------|
+| **Real-time streaming** | One-shot queries | 30fps updates |
+| **Unified protocol** | Per-platform APIs | Same format everywhere |
+| **Error handling** | Fail silently | Fallback hierarchy |
+| **Confidence scoring** | No quality metrics | Per-element confidence |
+| **Human handoff** | Not supported | Escalation protocol |
 
 ---
 
-## Error Handling
+## Fallback Hierarchy
 
 ```
-LEVEL 1: Native Semantic Tree (90% of apps)
+LEVEL 1: Native Semantic Tree (90%)
+└── AXUIElement / AT-SPI2 / UIA
+
 LEVEL 2: CDP Bridge (Electron/Browser)
+└── Chrome DevTools Protocol
+
 LEVEL 3: Structural Heuristics
+└── Position-based inference
+
 LEVEL 4: Position-Only Mode
+└── Window bounds only
+
 LEVEL 5: Human Handoff
+└── Escalation for edge cases
 ```
 
 ---
 
-## Coverage
+## Confidence & Agent Decision
 
-| Platform | Coverage | Blind Spots |
-|----------|----------|-------------|
-| **macOS** | 95% | Screen sharing, DRM |
-| **Linux** | 90-95% | Some Wayland, TTY |
-| **Windows** | 90% | Non-UIA apps, protected |
+| Confidence | Threshold | Agent Action |
+|------------|-----------|--------------|
+| **HIGH** | > 0.8 | Execute immediately |
+| **MEDIUM** | 0.5-0.8 | Execute with monitoring |
+| **LOW** | 0.3-0.5 | Explore first |
+| **NONE** | < 0.2 | Explore + handoff |
 
 ---
 
-## Quick Start
+## How It Works
 
 ```python
-import oscp
-
+# Agent connects to OSCP service
 client = oscp.connect("unix:///tmp/oscp.sock")
 
-async for tree in client.stream():
-    if tree.tree_analysis.confidence == "HIGH":
-        for element in tree.find_all("button"):
+# Real-time 30fps stream
+async for frame in client.stream():
+    if frame.tree_analysis.confidence == "HIGH":
+        # Standard desktop work - full speed
+        for element in frame.find("button"):
             if element.name == "Save":
                 await client.click(element.bounds)
+    
+    elif frame.tree_analysis.confidence == "LOW":
+        # Edge case - explore candidates
+        candidates = frame.explore(element)
+        for c in candidates:
+            result = await client.click(c)
+            if result.success:
+                break
+```
+
+---
+
+## Implementation Stack
+
+| Platform | Wraps | Streaming | Input | Time |
+|----------|-------|-----------|-------|------|
+| **macOS** | AXUIElement (pyax) | AXObserver 30fps | CGEvent | 4-6 weeks |
+| **Linux** | AT-SPI2 (dogtail) | D-Bus events 30fps | /dev/uinput | 6-8 weeks |
+| **Windows** | UIAutomation (pywinauto) | UIA events 30fps | SendInput | 6-8 weeks |
+
+**Total: 12-16 weeks for all three platforms**
+
+---
+
+## Update Note
+
+Windows implementation follows macOS and Linux. Start order: macOS → Linux → Windows.
+
+---
+
+## Directory Structure
+
+```
+OSCP/
+├── protocol/              # Protocol specification
+│
+├── platforms/
+│   ├── macos/            # AXUIElement wrapper + streaming
+│   ├── linux/            # AT-SPI2 wrapper + streaming
+│   └── windows/          # UIA wrapper + streaming
+│
+└── agents/               # Agent SDK guidelines
 ```
 
 ---
 
 ## Status
 
-🚧 **V1 Development** — Integration work, not new development
-🚧 **V2** — Windows render ops (DWM hook)
+- [x] Architecture finalized
+- [x] Existing tools identified
+- [x] Per-platform approach defined
+- [ ] Implementation pending
 
 ---
 

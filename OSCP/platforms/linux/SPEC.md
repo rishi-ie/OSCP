@@ -1,51 +1,15 @@
 # OSCP Linux Platform Driver Specification
 
-**Version:** 0.2.0
-**Status:** Draft
+**Version:** 0.3.0
+**Status:** Architecture Finalized
 
 ---
 
 ## Overview
 
-The Linux platform driver wraps AT-SPI2 and X11 into a real-time, streaming, error-resilient interface.
+The Linux platform driver wraps AT-SPI2 and X11 with a streaming layer.
 
-**Key Insight:** AT-SPI2 and X11 already extract the semantic tree. OSCP adds streaming, unification, and error handling.
-
----
-
-## Wrapped Technologies
-
-### AT-SPI2 (D-Bus Accessibility)
-
-```python
-# Native Linux accessibility:
-# AT-SPI2 is the standard D-Bus accessibility API
-# Used by: Orca screen reader, Accerciser, dogtail
-
-# Existing wrappers:
-# - dogtail (Python)
-# - pyatspi (PyAT-SPI2)
-# - ldtp (Linux Desktop Testing Project)
-# - at-spi2-core (system daemon)
-```
-
-### What AT-SPI2 Provides
-
-```python
-struct AT_SPIElement:
-    role: String           # ROLE_BUTTON, ROLE_MENU, etc.
-    name: String           # Accessible name
-    bounds: Rect           # Position and size
-    states: [State]       # STATE_ENABLED, etc.
-    children: [AT_SPIElement]
-```
-
-### X11 (Fallback)
-
-```python
-# XQueryTree, XGetWindowProperty, XGetWindowAttributes
-# Covers: X11 desktops + Xwayland apps (~85% of Linux)
-```
+**Key Insight:** AT-SPI2 and X11 already extract the semantic tree. OSCP adds streaming, unified protocol, and error handling.
 
 ---
 
@@ -53,139 +17,253 @@ struct AT_SPIElement:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     Platform Driver                             │
-│                                                                 │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │
-│  │  AT-SPI2         │  │   X11           │  │   Input      │  │
-│  │  (wrapped)       │  │   (fallback)    │  │   Engine     │  │
-│  │  EXISTING        │  │  EXISTING       │  │  (/dev/uinput)│  │
-│  └────────┬─────────┘  └────────┬─────────┘  └──────┬──────┘  │
-│           │                     │                   │          │
-│           └──────────┬──────────┘                   │          │
-│                      │                              │          │
-│               ┌──────▼──────┐                       │          │
-│               │   Stream    │◄──────────────────────┘          │
-│               │   + Error   │                              │
-│               │   Handler   │                              │
-│               └──────┬──────┘                              │
-│                      │                                     │
-│               ┌──────▼──────┐                              │
-│               │  Protocol   │                              │
-│               │  Server     │                              │
-│               │  (Unix)     │                              │
-│               └─────────────┘                              │
+│                 Platform Driver                             │
+│                                                             │
+│  ┌─────────────────┐  ┌──────────────────┐  ┌───────────┐ │
+│  │  STREAMING      │  │  ERROR HANDLER   │  │   INPUT   │ │
+│  │   ENGINE        │  │  + FALLBACKS     │  │  ENGINE   │ │
+│  │  (30fps)        │  │                  │  │           │ │
+│  └────────┬────────┘  └────────┬─────────┘  └─────┬─────┘ │
+│           │                    │                  │         │
+│           │             ┌──────▼──────┐          │         │
+│           │             │   TREE      │◄─────────┘         │
+│           │             │  ANALYZER   │                    │
+│           │             └──────┬──────┘                    │
+│           │                    │                          │
+│           │    ┌───────────────┴────────────┐            │
+│           │    │                            │            │
+│           │    ▼                            ▼            │
+│           │   ▼                              ▼           │
+│  ┌────────┴──────────────┐  ┌──────────────────────────┐ │
+│  │   PRIMARY CAPTURE      │  │    FALLBACK METHODS      │ │
+│  │                        │  │                          │ │
+│  │   AT-SPI2              │  │    CDP Bridge             │ │
+│  │   ──────────           │  │    (Chrome/Electron)     │ │
+│  │   Coverage: 85%        │  │                          │ │
+│  │                        │  │    X11                   │ │
+│  │                        │  │    (XQueryTree)          │ │
+│  │                        │  │    — X11 desktops        │ │
+│  │                        │  │    — Xwayland apps       │ │
+│  │                        │  │                          │ │
+│  │                        │  │    Position-Only Mode     │ │
+│  │                        │  │                          │ │
+│  │                        │  │    Human Handoff          │ │
+│  └────────────────────────┘  └──────────────────────────┘ │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │                 INPUT ENGINE                         │  │
+│  │  /dev/uinput + XTest fallback                        │  │
+│  └──────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Wrapped Technology
+
+### AT-SPI2 (Primary)
+
+```
+EXISTING: AT-SPI2 (D-Bus accessibility)
+WRAPPERS: dogtail, pyatspi, ldtp
+COVERAGE: 85%
+
+Provides:
+├── Element role (button, menu, etc.)
+├── Accessible name
+├── Bounds (position, size)
+├── States (enabled, visible, etc.)
+├── Application enumeration
+└── Window hierarchy
+```
+
+### X11 (Fallback for X11 + Xwayland)
+
+```
+EXISTING: X11 Protocol
+APIS: XQueryTree, XGetWindowProperty, XGetWindowAttributes
+COVERAGE: +5% (X11 desktops, Xwayland apps)
+
+Provides:
+├── Window list
+├── Window hierarchy
+├── Window metadata (title, class)
+└── Window bounds
+```
+
+### Input Engine
+
+```
+PRIMARY: /dev/uinput (Linux kernel interface)
+FALLBACK: XTest (X11 desktops)
+
+Provides:
+├── Mouse click/move/drag
+├── Keyboard input
+└── Key combinations
+```
+
+---
+
+## Streaming Engine
+
+```
+IMPLEMENTATION: AT-SPI2 Observer + Poll Interval
+
+AT-SPI2 Events (preferred):
+├── Accessible event bus
+├── D-Bus signals for changes
+└── Real-time notifications
+
+Poll Interval (fallback):
+├── 33ms interval (30fps)
+├── Query all accessible apps
+└── Extract changed elements
+
+FALLBACK: X11 polling
+└── When AT-SPI2 unavailable
 ```
 
 ---
 
 ## Fallback Hierarchy
 
-### Level 1: AT-SPI2 (Primary)
-
-```python
-# Wrapped from existing tools (dogtail, pyatspi)
-def capture_atspi() -> ElementTree:
-    # Connect to at-spi-bus
-    # Enumerate applications
-    # Extract element tree
 ```
+LEVEL 1: AT-SPI2 (Primary)
+├── GTK apps
+├── Qt apps
+├── Java Swing (if AT-SPI enabled)
+└── Coverage: 85%
 
-**Coverage: ~85%**
+LEVEL 2: CDP Bridge
+├── Chrome, Firefox
+├── Electron apps (VS Code, Slack, Discord)
+└── Coverage: +5%
 
-### Level 2: X11 (X11 + Xwayland)
+LEVEL 3: X11
+├── X11 desktops
+├── Xwayland apps on Wayland compositors
+└── Coverage: +5%
 
-```python
-# XQueryTree, XGetWindowProperty
-def capture_x11() -> PartialTree:
-    # Window hierarchy
-    # Metadata extraction
-```
+LEVEL 4: Position-Only
+├── SDL/GL games
+├── Custom renderers
+└── Works when tree is empty
 
-**Coverage: +5% (X11 desktops, Xwayland apps)**
-
-### Level 3: CDP Bridge (Electron/Browser)
-
-```python
-# Chrome, Firefox, Electron apps
-def capture_cdp() -> ElementTree:
-    # CDP port connection
-    # DOM extraction
-```
-
-### Level 4: Heuristics + Position-Only
-
-```python
-# For SDL/GL games and custom renderers
-def position_only(window: Window) -> EmptyTree:
-    return WindowBounds(window)
-```
-
-### Level 5: Human Handoff
-
-```python
-def human_handoff(reason: String) -> HandoffRequest:
-    return HandoffRequest(...)
+LEVEL 5: Human Handoff
+├── Wayland-native apps (no accessibility)
+└── Unrecoverable cases
 ```
 
 ---
 
-## Wayland Compositor Support
-
-### Detection
+## Tree Analyzer
 
 ```python
-def detect_compositor() -> WaylandCompositor:
-    # GNOME (Mutter), KDE (KWin), Sway, etc.
-```
-
-### Per-Compositor Bridge (Optional)
-
-```python
-# For native Wayland apps, per-compositor IPC:
-# - GNOME: org.gnome.Shell.Introspect (dbus)
-# - KDE: KWin scripting
-# - Sway: swaymsg IPC
-```
-
----
-
-## Error Detection
-
-### Tree Quality Analysis
-
-```python
-struct TreeAnalysis:
-    coverageScore: Float
-    namedElements: Int
-    unlabeledElements: Int
-    avgDepth: Float
-    confidence: Confidence  # HIGH, MEDIUM, LOW, NONE
-```
-
-### Detection Rules
-
-```python
-if coverageScore < 0.3: triggerFallback()
-if namedRatio < 0.5: triggerLowConfidence()
-if avgDepth < 2: triggerCustomRenderer()
+def analyze_tree(tree):
+    coverage = tree.covered_area / tree.window_area
+    named_ratio = tree.named_count / tree.total_count
+    
+    if coverage < 0.3:
+        confidence = "NONE"      # Empty tree
+    elif coverage < 0.5:
+        confidence = "LOW"      # Minimal tree
+    elif coverage < 0.8:
+        confidence = "MEDIUM"   # Partial tree
+    else:
+        confidence = "HIGH"     # Full tree
+    
+    return {
+        "coverage_score": coverage,
+        "named_elements": tree.named_count,
+        "unlabeled_elements": tree.unlabeled_count,
+        "confidence": confidence,
+        "recommended_action": recommended_action[confidence]
+    }
 ```
 
 ---
 
-## Revised Complexity
+## Error Handling
 
-| Component | Complexity | Notes |
-|-----------|------------|-------|
-| **AT-SPI2 wrapping** | Medium | D-Bus complexity |
-| **X11 fallback** | Low | Already exists |
-| **Real-time streaming** | Medium | 2-3 weeks |
-| **Wayland support** | High | Per-compositor IPC |
-| **Error handling** | Low | 1 week |
-| **Input engine** | Medium | /dev/uinput |
-| **Testing** | High | Multiple distros |
+```
+EMPTY TREE DETECTED:
+├── Check if app supports AT-SPI2
+├── Try CDP bridge (if browser/Electron)
+├── Try X11 (if X11/Xwayland)
+├── Fall back to position-only mode
+└── Report to agent with confidence
 
-**Time Estimate: 6-8 weeks**
+STRUCTURAL HEURISTICS:
+├── Even if tree is minimal, infer positions
+├── Toolbar pattern: top bar, small height
+├── Sidebar pattern: left or right, vertical
+└── Modal pattern: centered, high z-order
+```
+
+---
+
+## Output Format
+
+```json
+{
+  "type": "render_tree",
+  "platform": "linux",
+  "windows": [
+    {
+      "id": "win_0x400001",
+      "title": "VS Code",
+      "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
+      "focused": true,
+      "elements": [
+        {
+          "id": "e_001",
+          "type": "button",
+          "name": "Save",
+          "bounds": {"x": 1750, "y": 5, "w": 80, "h": 25},
+          "states": ["enabled", "visible"],
+          "confidence": 0.95,
+          "source": "atspi"
+        }
+      ]
+    }
+  ],
+  "tree_analysis": {
+    "coverage_score": 0.9,
+    "named_elements": 150,
+    "unlabeled_elements": 12,
+    "confidence": "HIGH",
+    "recommended_action": "execute"
+  }
+}
+```
+
+---
+
+## Implementation Stack
+
+| Layer | Technology |
+|-------|------------|
+| **Driver** | Python or Rust |
+| **AT-SPI2 Wrapper** | dogtail or pyatspi |
+| **Protocol Server** | Unix socket + JSON |
+| **Input** | /dev/uinput (C/Python) |
+
+---
+
+## System Requirements
+
+```
+REQUIRED:
+├── at-spi2-core package
+├── at-spi-bus running
+└── Accessibility enabled in desktop environment
+
+OPTIONAL:
+├── X11 (for X11 fallback)
+├── Chrome/Firefox (for CDP bridge)
+└── Accessibility permissions granted
+```
 
 ---
 
@@ -195,22 +273,31 @@ if avgDepth < 2: triggerCustomRenderer()
 # apt
 sudo apt install oscp
 
-# Requires:
-# - at-spi2-core package
-# - Accessibility enabled in desktop environment
+# dnf
+sudo dnf install oscp
+
+# Requires at-spi2-core
+sudo apt install at-spi2-core
 ```
+
+---
+
+## Time Estimate
+
+| Component | Complexity | Time |
+|-----------|-----------|------|
+| AT-SPI2 wrapping | Medium | 2-3 weeks |
+| X11 fallback | Low | 1 week |
+| Streaming engine | Medium | 2-3 weeks |
+| Error handling | Low | 1 week |
+| Input engine | Medium | 2 weeks |
+| Testing | High | 2-3 weeks |
+| **Total Linux** | | **6-8 weeks** |
 
 ---
 
 ## Status
 
-🚧 **V1 Target:** Wrapped AT-SPI2 + X11 + streaming + fallbacks
-⏱️ **Time:** 6-8 weeks
-
----
-
-## References
-
-- [AT-SPI2 Specification](https://www.freedesktop.org/wiki/Accessibility/)
-- [dogtail](https://github.com/nick96/dogtail) - Python AT-SPI2 library
-- [pyatspi](https://github.com/python-atspi/pyatspi) - PyAT-SPI2 bindings
+✅ Architecture documented
+✅ Existing tools identified
+⏳ Implementation pending

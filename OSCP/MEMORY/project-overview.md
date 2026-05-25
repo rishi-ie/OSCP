@@ -2,149 +2,86 @@
 
 ## Project Overview
 
-OSCP (Operating System Context Protocol) is a foundational protocol for agent-native OS interaction. It unifies existing OS accessibility APIs into a real-time, deterministic, agent-native interface for desktop automation.
+OSCP (Operating System Context Protocol) is a foundational protocol for agent-native OS interaction. It is a **wrapper + streaming layer** on top of existing OS accessibility APIs.
 
-**Principle:** "Unify existing tools. Add real-time streaming. Handle errors gracefully. Agent provides meaning."
+**Key Insight:** The hard parts are already built. OSCP adds real-time streaming, unified protocol, and error handling.
 
-## Core Concept
+## Core Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                 OSCP: Integration + Streaming                 │
-│                                                             │
-│  Existing Tools:          OSCP adds:                        │
-│  ├── AXUIElement    ───► │ Real-time streaming (30fps)    │
-│  ├── AT-SPI2       ───► │ Unified protocol (all OS)      │
-│  ├── UIA           ───► │ Error handling (fallbacks)     │
-│  └── Input APIs    ───► │ Agent-friendly output          │
-└─────────────────────────────────────────────────────────────┘
+OSCP = WRAPPER + STREAMING LAYER
+        │              │
+        │              ├── Real-time 30fps
+        │              ├── Unified protocol
+        │              ├── Error handling
+        │              └── Agent-friendly output
+        │
+        └── Existing OS Accessibility APIs
+             ├── AXUIElement (macOS)
+             ├── AT-SPI2 (Linux)
+             └── UIAutomation (Windows)
 ```
 
-**The hard parts (semantic tree extraction) are already built.**
-OSCP's contribution is unifying, streaming, and error handling.
+## What OSCP Wraps
 
-## What Already Exists
-
-| Platform | Existing Tool | What It Does |
-|----------|--------------|--------------|
-| **macOS** | `pyax`, `ax-element`, `accessibility-service` | Extract AXUIElement tree |
-| **Linux** | `dogtail`, `pyatspi`, `ldtp`, `at-spi2-core` | Extract AT-SPI2 tree |
-| **Windows** | `pywinauto`, `uiautomation`, `UIAutomationCore` | Extract UIA tree |
-
-**The semantic tree extraction is already done by existing tools.**
+| Platform | Existing API | Wrappers Available |
+|----------|-------------|-------------------|
+| **macOS** | AXUIElement | pyax, ax-element |
+| **Linux** | AT-SPI2 + X11 | dogtail, pyatspi, ldtp |
+| **Windows** | UIAutomation | pywinauto |
 
 ## What OSCP Adds
 
-| Feature | Description |
-|---------|-------------|
-| **Real-time streaming** | 30fps render tree updates (existing tools are one-shot) |
-| **Unified protocol** | Same format on macOS/Linux/Windows (existing tools are per-platform) |
-| **Error handling** | Fallback hierarchy, tree quality analysis, human handoff |
-| **Input engine** | Hardware-level input (well-documented) |
-| **Agent output** | Confidence scores, tree analysis metrics |
+| Component | Description |
+|-----------|-------------|
+| **Streaming Engine** | 30fps real-time updates (existing APIs are one-shot) |
+| **Unified Protocol** | Same format on all platforms |
+| **Error Handler** | Fallback hierarchy for empty/unhelpful trees |
+| **Tree Analyzer** | Coverage scores, confidence metrics |
+| **Input Engine** | Hardware-level actuation (undetectable) |
 
-## Per-Platform Approach
+## Fallback Hierarchy
 
-### macOS
-
-**Existing:** AXUIElement (Apple's accessibility API)
-**Wrap:** `pyax`, `ax-element`, or Rust bindings
-
-**Fallback Hierarchy:**
 ```
-1. AXUIElement (90%)
-2. CDP Bridge (Safari, Chrome, Electron)
-3. Position-Only Mode
-4. Human Handoff
-```
+LEVEL 1: Native Semantic Tree (90%)
+└── AXUIElement / AT-SPI2 / UIA
 
-### Linux
+LEVEL 2: CDP Bridge (Electron/Browser)
+└── Chrome DevTools Protocol
 
-**Existing:** AT-SPI2 (D-Bus accessibility)
-**Wrap:** `dogtail`, `pyatspi`, `ldtp`
+LEVEL 3: Structural Heuristics
+└── Position-based inference
 
-**Fallback Hierarchy:**
-```
-1. AT-SPI2 (85%)
-2. X11 (XQueryTree)
-3. CDP Bridge (Chrome, Firefox, Electron)
-4. Heuristics
-5. Human Handoff
+LEVEL 4: Position-Only Mode
+└── Window bounds only
+
+LEVEL 5: Human Handoff
+└── Escalation for edge cases
 ```
 
-### Windows
-
-**Existing:** UIAutomation + Win32
-**Wrap:** `pywinauto`, `UIAutomationCore`
-
-**Fallback Hierarchy:**
-```
-1. UIAutomation (85%)
-2. CDP Bridge (Chrome, Edge, VS Code)
-3. Win32 EnumWindows
-4. Position-Only Mode
-5. Human Handoff
-```
-
-## Revised Complexity
-
-| Component | Complexity | Notes |
-|-----------|------------|-------|
-| **Semantic tree extraction** | Already done | 0 weeks |
-| **Real-time streaming** | Medium | 2-3 weeks |
-| **Unified protocol** | Low | 1 week |
-| **Error handling** | Low | 1 week |
-| **Input engine** | Low | 1 week |
-| **Testing** | Medium | 2 weeks |
-
-## Revised Time Estimates
-
-| Platform | Original | Revised |
-|----------|----------|---------|
-| **macOS** | 6-8 weeks | 4-6 weeks |
-| **Linux** | 10-14 weeks | 6-8 weeks |
-| **Windows** | 7-9 weeks | 4-6 weeks |
-
-**Total: 12-16 weeks (not 14-17)**
-
-## Coverage
-
-| Platform | Coverage | Blind Spots |
-|----------|----------|-------------|
-| **macOS** | 95% | Screen sharing, DRM |
-| **Linux** | 90-95% | Some Wayland, TTY |
-| **Windows** | 90% | Non-UIA apps, protected |
-
-## Error Handling
-
-### Tree Quality Metrics
-
-```json
-{
-  "coverage_score": 0.85,
-  "named_elements": 45,
-  "unlabeled_elements": 3,
-  "confidence": "HIGH"
-}
-```
-
-### Confidence Thresholds
+## Confidence Decision Table
 
 | Confidence | Threshold | Agent Action |
 |------------|-----------|--------------|
-| HIGH | > 0.8 | Execute immediately |
-| MEDIUM | 0.5-0.8 | Execute with monitoring |
-| LOW | 0.3-0.5 | Explore first |
-| NONE | < 0.2 | Human handoff |
+| **HIGH** | > 0.8 | Execute immediately |
+| **MEDIUM** | 0.5-0.8 | Execute with monitoring |
+| **LOW** | 0.3-0.5 | Explore first |
+| **NONE** | < 0.2 | Human handoff |
 
-## Status
+## Coverage & Time
 
-Phase 0 complete. V1 implementation starting.
-Key insight: The hard parts are already built. OSCP is integration work.
+| Platform | Wraps | Coverage | Time |
+|----------|-------|----------|------|
+| **macOS** | AXUIElement | 95% | 4-6 weeks |
+| **Linux** | AT-SPI2 + X11 | 90-95% | 6-8 weeks |
+
+## Project Status
+
+Phase 0 complete. Architecture finalized.
 
 ## References
 
 - GitHub: github.com/rishi-ie/OSCP
-- Existing tools: dogtail, pywinauto, pyax, pyatspi
 - Protocol: OSCP/protocol/SPEC.md
-- Platforms: OSCP/platforms/{macos,linux,windows}/SPEC.md
+- Architecture: OSCP/MEMORY/architecture.md
+- Specs: OSCP/platforms/{macos,linux,windows}/SPEC.md

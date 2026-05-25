@@ -1,15 +1,15 @@
 # OSCP Windows Platform Driver Specification
 
-**Version:** 0.2.0
-**Status:** Draft
+**Version:** 0.3.0
+**Status:** Architecture Finalized
 
 ---
 
 ## Overview
 
-The Windows platform driver provides OSCP protocol implementation for Windows 10/11. It uses UI Automation (UIA) and Win32 APIs with a comprehensive fallback hierarchy to handle problematic apps.
+The Windows platform driver wraps UIAutomation with a streaming layer.
 
-**Principle:** Deterministic. Error-resilient. Graceful degradation.
+**Plan:** macOS first (simpler), then Linux, then Windows.
 
 ---
 
@@ -17,303 +17,133 @@ The Windows platform driver provides OSCP protocol implementation for Windows 10
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     Platform Driver                             │
-│                                                                 │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │
-│  │     UIA      │  │    Win32     │  │   Input Engine   │   │
-│  │  Element Tree │  │  Window Enum │  │     (Rust)       │   │
-│  └───────┬──────┘  └───────┬──────┘  └────────┬─────────┘   │
-│          │                 │                  │               │
-│          └──────────┬──────┘                  │               │
-│                     │                         │               │
-│              ┌──────▼──────┐                   │               │
-│              │    Tree     │◄──────────────────┘               │
-│              │   Builder   │                                   │
-│              │   + Error   │                                   │
-│              │   Handler   │                                   │
-│              └──────┬──────┘                                   │
-│                     │                                          │
-│              ┌──────▼──────┐                                   │
-│              │  Protocol   │                                   │
-│              │  Server     │                                   │
-│              │  (TCP)      │                                   │
-│              └─────────────┘                                   │
+│                 Platform Driver                             │
+│                                                             │
+│  ┌─────────────────┐  ┌──────────────────┐  ┌───────────┐ │
+│  │  STREAMING      │  │  ERROR HANDLER   │  │   INPUT   │ │
+│  │   ENGINE        │  │  + FALLBACKS     │  │  ENGINE   │ │
+│  │  (30fps)        │  │                  │  │           │ │
+│  └────────┬────────┘  └────────┬─────────┘  └─────┬─────┘ │
+│           │                    │                  │         │
+│           │             ┌──────▼──────┐          │         │
+│           │             │   TREE      │◄─────────┘         │
+│           │             │  ANALYZER   │                    │
+│           │             └──────┬──────┘                    │
+│           │                    │                          │
+│           │    ┌───────────────┴────────────┐            │
+│           │    │                            │            │
+│           │    ▼                            ▼            │
+│           │   ▼                              ▼           │
+│  ┌────────┴──────────────┐  ┌──────────────────────────┐ │
+│  │   PRIMARY CAPTURE      │  │    FALLBACK METHODS      │ │
+│  │                        │  │                          │ │
+│  │   UIAutomation         │  │    CDP Bridge             │ │
+│  │   ─────────────────    │  │    (Chrome/Edge/Electron) │ │
+│  │   Coverage: 85%        │  │                          │ │
+│  │                        │  │    Win32 EnumWindows      │ │
+│  │   Win32                │  │    (window list only)     │ │
+│  │   ─────────────        │  │                          │ │
+│  │   Coverage: +5%        │  │    Position-Only Mode      │ │
+│  │                        │  │                          │ │
+│  │                        │  │    Human Handoff          │ │
+│  └────────────────────────┘  └──────────────────────────┘ │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │                 INPUT ENGINE                         │  │
+│  │  SendInput — click, type, key combos                 │  │
+│  └──────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Primary Capture: UIAutomation
+## Wrapped Technology
 
-### What It Captures
+### UIAutomation (Primary)
 
-```rust
-// UIA APIs used:
-struct UIAElement {
-    pub element_type: ElementType,      // Button, Menu, etc.
-    pub name: String,                   // Display text
-    pub bounds: Rect,                   // Position and size
-    pub state: Vec<ElementState>,       // Enabled, Focused, etc.
-    pub children: Vec<UIAElement>,      // Child elements
-    pub automation_id: String,         // Internal ID
-}
+```
+EXISTING: UIAutomationCore (Windows COM API)
+WRAPPERS: pywinauto, native C#
+COVERAGE: 85%
+
+Provides:
+├── Element name and class
+├── Element type (button, edit, etc.)
+├── Position and size
+├── Control patterns (Invoke, Value, etc.)
+├── Window and control enumeration
+└──HUIAutomation or IUIAutomation
 ```
 
-### Coverage
+### Win32 (Fallback)
 
-| App Type | Works? | Notes |
-|----------|--------|-------|
-| Win32 apps | ✅ | Full UIA support |
-| WPF apps | ✅ | Full UIA support |
-| UWP apps | ✅ | Full UIA support |
-| Electron (Chromium) | ✅ | UIA + CDP fallback |
-| WinForms | ⚠️ | Basic UIA |
-| Legacy Win32 | ⚠️ | Limited |
-| DirectX/Vulkan | ❌ | No UIA |
+```
+EXISTING: Win32 API
+APIS: EnumWindows, GetWindowRect, GetWindowText
+COVERAGE: +5% (non-UIA apps)
 
-**Primary Coverage: ~85%**
+Provides:
+├── Window list
+├── Window positions and sizes
+└── Window titles
+```
+
+### SendInput (Input)
+
+```
+EXISTING: SendInput (user32.dll)
+USAGE: Input injection
+
+Provides:
+├── Mouse click/move/drag
+├── Keyboard input
+└── Key combinations
+```
 
 ---
 
 ## Fallback Hierarchy
 
-### Level 1: UIA (Primary)
-
-```rust
-fn capture_uia(hwnd: HWND) -> Result<ElementTree> {
-    // Standard UIA extraction
-    // Returns full element tree with names, types, bounds
-}
 ```
+LEVEL 1: UIAutomation (Primary)
+├── Win32 apps with UIA support
+├── WPF apps
+├── UWP apps
+└── Coverage: 85%
 
-### Level 2: CDP Bridge (Electron/Browser)
+LEVEL 2: CDP Bridge
+├── Chrome
+├── Edge
+├── Electron apps (VS Code, Slack)
+└── Coverage: +5%
 
-```rust
-async fn capture_cdp(app_name: &str) -> Result<ElementTree> {
-    // Connect to CDP port (localhost:9222)
-    // Extract DOM tree with bounding boxes
-    // Same data as UIA, different source
-    
-    // Covers: Chrome, Edge, Firefox, VS Code, Slack, Discord
-}
-```
+LEVEL 3: Win32 EnumWindows
+├── Legacy Win32 apps (no UIA)
+└── Coverage: +5%
 
-### Level 3: Win32 Enumeration (Fallback)
+LEVEL 4: Position-Only Mode
+├── OpenGL apps
+├── Vulkan apps
+└── Works when tree is empty
 
-```rust
-fn capture_win32() -> PartialTree {
-    // EnumWindows for window list
-    // GetWindowRect for positions
-    // GetWindowText for titles
-    // No element tree, just window metadata
-}
-```
-
-### Level 4: Position-Only Mode
-
-```rust
-fn position_only_mode(window: Window) -> EmptyTree {
-    // Return window bounds only
-    // Agent must learn through exploration
-    // Triggered when coverage_score < 0.3
-}
-```
-
-### Level 5: Human Handoff
-
-```rust
-fn human_handoff(reason: &str, attempts: u32) -> HandoffRequest {
-    // Report failure
-    // Ask for guidance
-    // Return options to agent
-}
+LEVEL 5: Human Handoff
+├── Protected content
+└── Unrecoverable cases
 ```
 
 ---
 
-## Error Detection
+## System Requirements
 
-### Tree Quality Analysis
-
-```rust
-struct TreeAnalysis {
-    coverage_score: f32,      // 0.0-1.0
-    named_elements: u32,
-    unlabeled_elements: u32,
-    avg_depth: f32,
-    confidence: Confidence,
-}
-
-enum Confidence {
-    HIGH,    // > 0.8
-    MEDIUM,  // 0.5-0.8
-    LOW,     // 0.3-0.5
-    NONE,    // < 0.2
-}
 ```
+REQUIRED:
+├── Windows 10 or Windows 11
+├── UIAutomation available
+└── Application running
 
-### Detection Triggers
-
-```rust
-fn analyze_tree(tree: &ElementTree) -> TreeAnalysis {
-    let named_ratio = tree.named_count / tree.total_count;
-    let coverage = tree.covered_area / tree.window_area;
-    
-    if coverage < 0.3 {
-        return TreeAnalysis {
-            confidence: Confidence::NONE,
-            recommended_fallback: "position_only"
-        };
-    }
-    
-    if named_ratio < 0.5 {
-        return TreeAnalysis {
-            confidence: Confidence::LOW,
-            recommended_fallback: "heuristics"
-        };
-    }
-    
-    // ... etc
-}
-```
-
----
-
-## Output Format
-
-### Standard Frame
-
-```json
-{
-  "type": "render_tree",
-  "platform": "windows",
-  "windows": [
-    {
-      "id": "win_0x12345",
-      "title": "VS Code",
-      "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
-      "focused": true,
-      "elements": [
-        {
-          "id": "e_001",
-          "type": "button",
-          "name": "Save",
-          "bounds": {"x": 1750, "y": 5, "w": 80, "h": 25},
-          "state": ["enabled", "visible"],
-          "confidence": 0.95,
-          "source": "uia"
-        }
-      ]
-    }
-  ],
-  "tree_analysis": {
-    "coverage_score": 0.9,
-    "named_elements": 150,
-    "unlabeled_elements": 12,
-    "confidence": "HIGH"
-  }
-}
-```
-
-### Fallback Frame
-
-```json
-{
-  "type": "render_tree",
-  "platform": "windows",
-  "windows": [
-    {
-      "id": "win_0x500001",
-      "title": "CustomGame",
-      "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
-      "elements": [],
-      "fallback_active": true,
-      "fallback_method": "position_only",
-      "fallback_reason": "custom_renderer_detected"
-    }
-  ],
-  "tree_analysis": {
-    "coverage_score": 0.05,
-    "named_elements": 0,
-    "unlabeled_elements": 1,
-    "confidence": "NONE",
-    "recommended_action": "human_handoff"
-  }
-}
-```
-
----
-
-## Action Result with Confidence
-
-```json
-{
-  "type": "action_result",
-  "action_id": "act_001",
-  "success": true,
-  "confidence": 0.95,
-  "source": "uia",
-  "error": null
-}
-```
-
-```json
-{
-  "type": "action_result",
-  "action_id": "act_002",
-  "success": false,
-  "confidence": 0.2,
-  "source": "heuristic",
-  "error": {
-    "code": "EMPTY_TREE",
-    "message": "Semantic tree empty",
-    "reasoning": "Custom renderer detected",
-    "alternatives": [
-      {"bounds": {"x": 1700, "y": 5}, "confidence": 0.3},
-      {"bounds": {"x": 1750, "y": 5}, "confidence": 0.2}
-    ],
-    "recommended_action": "explore_and_confirm"
-  }
-}
-```
-
----
-
-## Error Codes
-
-| Code | Description |
-|------|-------------|
-| `EMPTY_TREE` | Semantic tree empty or useless |
-| `ELEMENT_NOT_FOUND` | Target element missing |
-| `CUSTOM_RENDERER` | OpenGL/Vulkan/Metal detected |
-| `PERMISSION_DENIED` | UIA access blocked |
-| `DRM_BLOCKED` | Protected content |
-
----
-
-## Protocol Implementation
-
-### Transport
-
-Default: `tcp://localhost:9876`
-
-### Capabilities
-
-```json
-{
-  "platform": "windows",
-  "driver": "oscp-windows-v0.2",
-  "semantic_apis": ["uia", "win32"],
-  "fallback_methods": ["cdp", "win32", "position_only", "human_handoff"],
-  "capabilities": ["render_tree", "actions", "events", "error_handling"],
-  "features": {
-    "element_tree": true,
-    "cdp_bridge": true,
-    "heuristics": true,
-    "multi_window": true,
-    "multi_monitor": true
-  }
-}
+OPTIONAL:
+├── Chrome/Electron (for CDP bridge)
+└── Admin rights (for certain input operations)
 ```
 
 ---
@@ -321,19 +151,34 @@ Default: `tcp://localhost:9876`
 ## Installation
 
 ```powershell
-winget install OSCP.Windows
+winget install oscp
+# or
+choco install oscp
 ```
+
+---
+
+## Time Estimate
+
+| Component | Complexity | Time |
+|-----------|-----------|------|
+| UIA wrapping | Medium | 2-3 weeks |
+| CDP bridge | Medium | 1-2 weeks |
+| Streaming engine | Medium | 2 weeks |
+| Error handling | Low | 1 week |
+| SendInput | Low | 1 week |
+| Testing | Medium | 1-2 weeks |
+| **Total Windows Not Started** | | **6-8 weeks** |
+
+---
+
+## Update Note
+
+This spec is documented for completeness. Windows implementation follows macOS and Linux.
 
 ---
 
 ## Status
 
-🚧 **V1 Target:** UIA + Win32 + fallback hierarchy
-
----
-
-## References
-
-- [UI Automation](https://learn.microsoft.com/en-us/windows/win32/winauto/ui-automation)
-- [Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/)
-- [Win32 Window Enumeration](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-enumwindows)
+✅ Architecture documented
+⏸️ Implementation pending (macOS, Linux first)
