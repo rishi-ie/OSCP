@@ -7,19 +7,31 @@
 
 ## Purpose
 
-OSCP is a foundational protocol for agent-native OS interaction. It delivers deterministic, pixel-perfect interaction via semantic tree extraction and hardware-level actuation — enabling agents to see and interact with the full desktop just like humans.
+OSCP is a foundational protocol for agent-native OS interaction. It unifies existing OS accessibility APIs into a real-time, deterministic, agent-native interface.
 
-**Key Properties:**
-- Deterministic (not probabilistic like VLMs)
-- Low-latency (<50ms per action)
-- Zero visual parsing
-- Handles errors gracefully with fallback hierarchy
+**Key Insight:** The hard parts (semantic tree extraction) are already built. OSCP adds:
+- Real-time streaming (30fps)
+- Unified protocol (all platforms)
+- Error handling (graceful degradation)
+- Agent-native output (confidence scores)
 
 ---
 
 ## Principle
 
-> "Intercept the semantic tree. Deliver coordinates. Agent provides meaning. Handle errors gracefully."
+> "Wrap existing tools. Add real-time streaming. Handle errors gracefully. Agent provides meaning."
+
+---
+
+## What Already Exists
+
+| Platform | Existing API | Status |
+|----------|-------------|--------|
+| macOS | AXUIElement | Proven, well-documented |
+| Linux | AT-SPI2 | Proven, well-documented |
+| Windows | UIAutomation | Proven, well-documented |
+
+**These APIs already extract semantic trees. OSCP wraps them.**
 
 ---
 
@@ -32,12 +44,12 @@ OSCP is a foundational protocol for agent-native OS interaction. It delivers det
 │            ┌────────────────┬────────────────┐                 │
 │            │                │                │                  │
 │            ▼                ▼                ▼                  │
-│     ┌──────────┐      ┌──────────┐                                 │
-│     │  macOS   │      │  Linux   │      ┌──────────┐              │
-│     │ Platform │      │ Platform │      │ Windows  │              │
-│     │  Driver  │      │  Driver  │      │ Platform │              │
-│     └──────────┘      └──────────┘      │  Driver  │              │
-│            │                │           └──────┬───┘              │
+│     ┌──────────┐      ┌──────────┐      ┌──────────┐          │
+│     │  macOS   │      │  Linux   │      │ Windows  │              │
+│     │ Platform │      │ Platform │      │ Platform │              │
+│     │  Driver  │      │  Driver  │      │  Driver  │              │
+│     └──────────┘      └──────────┘      └──────┬───┘              │
+│            │                │                   │                  │
 │            └────────────────┴───────────────────┘                  │
 │                         │                                        │
 │                    Protocol Layer                                 │
@@ -48,26 +60,101 @@ OSCP is a foundational protocol for agent-native OS interaction. It delivers det
 
 ## Per-Platform Approach
 
-### macOS: AXUIElement
+### macOS
 
-**Semantic Tree:** `AXUIElement` (Accessibility API)
-**System State:** `sysctl` + `NSWorkspace`
-**Actuation:** `CGEvent` (hardware-level)
-**Fallback:** Position-only + CDP
+**Wraps:** AXUIElement (Apple's accessibility API)
 
-### Linux: AT-SPI2 + X11
+Existing tools:
+- `pyax` - Python AXUIElement wrapper
+- `ax-element` - Rust AXUIElement bindings
+- `accessibility-service` - Native macOS
 
-**Semantic Tree:** `AT-SPI2` (D-Bus accessibility)
-**System State:** `/proc` + `systemd` D-Bus
-**Actuation:** `/dev/uinput` (kernel-level)
-**Fallback:** X11 + Heuristics
+### Linux
 
-### Windows: UIAutomation + WMI
+**Wraps:** AT-SPI2 (D-Bus accessibility)
 
-**Semantic Tree:** `UIAutomation` (UIA)
-**System State:** Windows Management Instrumentation (WMI)
-**Actuation:** `SendInput` (kernel-level)
-**Fallback:** CDP + WMI
+Existing tools:
+- `dogtail` - Python AT-SPI2 library
+- `pyatspi` - PyAT-SPI2 bindings
+- `ldtp` - Linux Desktop Testing Project
+- `at-spi2-core` - System accessibility daemon
+
+### Windows
+
+**Wraps:** UIAutomation + Win32
+
+Existing tools:
+- `pywinauto` - Python UIA/Win32 wrapper
+- `UIAutomationCore` - Native COM API
+- Win32 APIs (EnumWindows, GetWindowRect)
+
+---
+
+## What OSCP Adds
+
+### 1. Real-Time Streaming
+
+Existing tools are **one-shot queries**. OSCP provides **30fps continuous updates**.
+
+```python
+# Existing tools (dogtail, pywinauto):
+tree = dogtail.tree.root  # One snapshot
+# No updates unless you query again
+
+# OSCP (real-time stream):
+async for frame in client.stream():
+    # 30fps updates
+    # Agent sees every change
+```
+
+### 2. Unified Protocol
+
+Existing tools have **per-platform APIs**. OSCP provides **same format everywhere**.
+
+```python
+# Existing tools:
+if platform == 'linux':
+    tree = dogtail.get_tree()
+elif platform == 'windows':
+    tree = pywinauto.get_tree()
+
+# OSCP (unified):
+tree = client.get_frame()  # Same on all platforms
+```
+
+### 3. Error Handling
+
+Existing tools **fail silently**. OSCP provides **fallback hierarchy**.
+
+```python
+# Existing tools:
+try:
+    tree = get_tree()  # Might return empty
+except:
+    pass  # Silent failure
+
+# OSCP (error handling):
+if tree.coverage_score < 0.3:
+    tree = try_cdp()  # Fallback
+    if not tree:
+        tree = position_only()  # Last resort
+```
+
+### 4. Confidence Scoring
+
+Existing tools provide **no quality metrics**. OSCP provides **per-element confidence**.
+
+```python
+# Existing tools:
+elements = tree.find_all()  # No confidence info
+
+# OSCP:
+for element in tree.elements:
+    if element.confidence > 0.8:
+        execute(element)  # High confidence
+    else:
+        explore_first(element)  # Low confidence
+```
 
 ---
 
@@ -75,115 +162,48 @@ OSCP is a foundational protocol for agent-native OS interaction. It delivers det
 
 ### The Challenge
 
-Some apps return empty or unhelpful semantic trees:
-- Custom renderers (OpenGL, Vulkan, Metal)
-- Unlabeled icons (gear icon without text)
-- DRM-protected content
-- Remote Desktop sessions
+Custom renderers, unlabeled icons, DRM cause empty/unhelpful trees.
 
 ### Fallback Hierarchy
 
 ```
 LEVEL 1: Native Semantic Tree (90% of apps)
-   └── UIA / AXUIElement / AT-SPI2
+   └── AXUIElement / AT-SPI2 / UIA
    
-LEVEL 2: CDP Bridge (Electron/Browser apps)
-   └── Chrome DevTools Protocol for DOM extraction
+LEVEL 2: CDP Bridge (Electron/Browser)
+   └── Chrome DevTools Protocol
    
-LEVEL 3: Structural Heuristics (Custom UIs)
-   └── Infer from position, size, z-order patterns
+LEVEL 3: Structural Heuristics
+   └── Position-based inference
    
-LEVEL 4: Position-Only Mode (Games, Custom renderers)
-   └── Agent learns through trial and error
+LEVEL 4: Position-Only Mode
+   └── Agent learns through exploration
    
-LEVEL 5: Human Handoff (Escalation)
-   └── Report failure, ask for guidance
+LEVEL 5: Human Handoff
+   └── Escalation for edge cases
 ```
 
-### Tree Quality Metrics
+### Tree Quality Analysis
 
 ```json
 {
   "tree_analysis": {
     "coverage_score": 0.85,
-    "named_elements": 45,
-    "unlabeled_elements": 3,
-    "avg_depth": 4,
+    "named_elements": 150,
+    "unlabeled_elements": 12,
     "confidence": "HIGH"
   }
 }
 ```
 
-| Metric | Trigger |
-|--------|---------|
-| `coverage_score < 0.3` | Low confidence - trigger fallback |
-| `named_elements / total < 0.5` | Many unlabeled - low confidence |
-| `root_has_no_children` | Custom renderer detected |
+### Confidence Thresholds
 
-### Confidence Scoring
-
-| Confidence | Threshold | Action |
-|------------|-----------|--------|
-| **HIGH** | > 0.8 | Execute immediately |
-| **MEDIUM** | 0.5-0.8 | Execute with monitoring |
-| **LOW** | 0.3-0.5 | Explore first |
-| **NONE** | < 0.2 | Human handoff |
-
-### Action Result Format
-
-```json
-{
-  "type": "action_result",
-  "action_id": "act_001",
-  "success": true,
-  "confidence": 0.95,
-  "source": "uia",
-  "error": null
-}
-```
-
-```json
-{
-  "type": "action_result",
-  "action_id": "act_002",
-  "success": false,
-  "confidence": 0.2,
-  "source": "heuristic",
-  "error": {
-    "code": "EMPTY_TREE",
-    "message": "Semantic tree empty, fallback attempted",
-    "reasoning": "Custom renderer detected, no element names",
-    "alternatives": [
-      {"bounds": {"x": 1700, "y": 5}, "confidence": 0.3},
-      {"bounds": {"x": 1750, "y": 5}, "confidence": 0.2}
-    ]
-  }
-}
-```
-
----
-
-## CDP Bridge (Electron/Browser Apps)
-
-For Electron apps and browsers where native accessibility fails:
-
-```json
-{
-  "action": "cdp_snapshot",
-  "target": "code.exe",
-  "returns": {
-    "dom_tree": {
-      "selector": "#save-button",
-      "text": "Save",
-      "bounding_box": {"x": 1750, "y": 5, "w": 80, "h": 25}
-    },
-    "computed_styles": {...},
-    "element_labels": [...]
-  }
-}
-```
-
-**Covers:** Chrome, Edge, Firefox, VS Code, Slack, Discord, Notion, Figma.
+| Confidence | Threshold | Agent Action |
+|------------|-----------|--------------|
+| HIGH | > 0.8 | Execute immediately |
+| MEDIUM | 0.5-0.8 | Execute with monitoring |
+| LOW | 0.3-0.5 | Explore first |
+| NONE | < 0.2 | Human handoff |
 
 ---
 
@@ -195,7 +215,6 @@ For Electron apps and browsers where native accessibility fails:
 {
   "type": "render_tree",
   "frame_id": 12345,
-  "timestamp": 1716576000000,
   "platform": "linux",
   "windows": [
     {
@@ -209,9 +228,8 @@ For Electron apps and browsers where native accessibility fails:
           "type": "button",
           "name": "Save",
           "bounds": {"x": 1750, "y": 5, "w": 80, "h": 25},
-          "state": ["enabled", "visible"],
           "confidence": 0.95,
-          "source": "uia"
+          "source": "atspi"
         }
       ]
     }
@@ -219,18 +237,12 @@ For Electron apps and browsers where native accessibility fails:
   "tree_analysis": {
     "coverage_score": 0.9,
     "named_elements": 150,
-    "unlabeled_elements": 12,
     "confidence": "HIGH"
-  },
-  "mouse": {
-    "x": 540,
-    "y": 320,
-    "hovered_element_id": "e_042"
   }
 }
 ```
 
-### Fallback Frame (Empty Tree)
+### Fallback Frame
 
 ```json
 {
@@ -240,8 +252,7 @@ For Electron apps and browsers where native accessibility fails:
   "windows": [
     {
       "id": "win_0x500001",
-      "title": "CustomApp",
-      "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
+      "title": "CustomGame",
       "elements": [],
       "fallback_active": true,
       "fallback_method": "position_only",
@@ -250,34 +261,36 @@ For Electron apps and browsers where native accessibility fails:
   ],
   "tree_analysis": {
     "coverage_score": 0.05,
-    "named_elements": 0,
-    "unlabeled_elements": 1,
-    "confidence": "NONE"
-  },
-  "recommended_action": "human_handoff"
+    "confidence": "NONE",
+    "recommended_action": "human_handoff"
+  }
 }
 ```
 
 ---
 
-## Coverage
+## Revised Complexity
 
-| Platform | Primary | Fallback | Total |
-|----------|---------|----------|-------|
-| **macOS** | AXUIElement (90%) | Position-only | 95% |
-| **Linux** | AT-SPI2 (85%) | X11 + Heuristics | 90-95% |
-| **Windows** | UIA (85%) | CDP + WMI | 90% |
+| Component | Complexity | Notes |
+|-----------|------------|-------|
+| **Semantic tree extraction** | Already done | 0 weeks |
+| **Real-time streaming** | Medium | 2-3 weeks |
+| **Unified protocol** | Low | 1 week |
+| **Error handling** | Low | 1 week |
+| **Input engine** | Low | 1 week |
+| **Testing** | Medium | 2 weeks |
 
 ---
 
-## Implementation Roadmap
+## Revised Time Estimates
 
-| Phase | Description | Timeline |
-|-------|-------------|----------|
-| **V1** | macOS driver (AXUIElement + error handling) | 2-3 months |
-| **V1** | Linux driver (AT-SPI2 + X11 fallback) | 3-4 months |
-| **V1** | Windows driver (UIA + CDP fallback) | 1-2 months |
-| **V2** | Windows render ops (DWM hook) | 5-9 months |
+| Platform | Original | Revised |
+|----------|----------|---------|
+| **macOS** | 6-8 weeks | 4-6 weeks |
+| **Linux** | 10-14 weeks | 6-8 weeks |
+| **Windows** | 7-9 weeks | 4-6 weeks |
+
+**Total: 12-16 weeks**
 
 ---
 
@@ -289,9 +302,9 @@ OSCP/
 │   └── SPEC.md        # Core protocol
 │
 ├── platforms/          # OS-specific drivers
-│   ├── macos/         # AXUIElement + fallbacks
-│   ├── linux/         # AT-SPI2 + X11
-│   └── windows/       # UIA + CDP
+│   ├── macos/         # Wraps AXUIElement
+│   ├── linux/         # Wraps AT-SPI2
+│   └── windows/       # Wraps UIA
 │
 ├── agents/             # Agent integration
 │   └── SPEC.md       # Agent SDK guidelines
@@ -301,19 +314,10 @@ OSCP/
 
 ---
 
-## Core Principles
-
-1. **Determinism over probability** — Semantic trees are mathematical facts, not guesses
-2. **Zero visual parsing** — No VLMs, no screenshots, no pixel analysis
-3. **Graceful degradation** — Fallback hierarchy ensures agents never get stuck
-4. **Hardware-level actuation** — OS cannot distinguish agent from human
-5. **Agent provides meaning** — Protocol delivers coordinates, agent supplies semantics
-
----
-
 ## Status
 
-🚧 **Phase 0** — Design complete. V1 implementation with error handling.
+🚧 **Phase 0** — Design complete. V1 implementation starting.
+🚧 **Key insight:** Integration work, not new development.
 
 ---
 
