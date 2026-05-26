@@ -9,6 +9,35 @@
 
 OSCP is a **wrapper + on-demand layer** on top of existing OS accessibility APIs. Agent requests screen state when needed; OSCP responds with semantic tree.
 
+## Repository Structure
+
+```
+OSCP/
+├── README.md                    # Project overview
+├── SPEC.md                     # This file
+│
+├── protocol/
+│   └── SPEC.md                 # Protocol specification
+│
+├── platforms/
+│   ├── macos/
+│   │   └── SPEC.md             # macOS implementation
+│   ├── linux/
+│   │   └── SPEC.md             # Linux implementation
+│   └── windows/
+│       └── SPEC.md             # Deferred
+│
+├── agents/
+│   └── SPEC.md                 # Agent SDK guidelines
+│
+├── MEMORY/                     # Project context
+│   ├── architecture.md
+│   ├── DECISIONS.md
+│   └── project-overview.md
+│
+└── docs/                       # Documentation
+```
+
 ---
 
 ## Architecture
@@ -22,11 +51,6 @@ AGENT                                    OSCP SERVICE
  │                                           ├─► Tree analysis
  │  ◄────────────────────────────────────────│
  │  { windows, elements, confidence }          │
- │                                           │
- │  oscp.click(bounds) ─────────────────────►│
- │                                           ├─► Input injection
- │  ◄────────────────────────────────────────│
- │  { success: true }                        │
 ```
 
 ---
@@ -35,8 +59,8 @@ AGENT                                    OSCP SERVICE
 
 | Platform | Spec | Status | Time |
 |----------|------|--------|------|
-| **macOS** | `platforms/macos/SPEC.md` | ✅ Detailed | 4-5 weeks |
-| **Linux** | `platforms/linux/SPEC.md` | ✅ Detailed | 6-7 weeks |
+| **macOS** | `platforms/macos/SPEC.md` | ✅ Ready | 4-5 weeks |
+| **Linux** | `platforms/linux/SPEC.md` | ✅ Ready | 6-7 weeks |
 | **Windows** | `platforms/windows/SPEC.md` | ⏸️ Deferred | - |
 
 ---
@@ -57,7 +81,6 @@ Full protocol specification in `protocol/SPEC.md`:
 - Element models specified
 - Error codes defined
 - Framing specified
-- Request-response model
 
 ---
 
@@ -65,31 +88,22 @@ Full protocol specification in `protocol/SPEC.md`:
 
 ```
 LEVEL 1: Native Semantic Tree (90%)
-   └── AXUIElement / AT-SPI2
-
 LEVEL 2: CDP Bridge (Browser/Electron)
-   └── Chrome DevTools Protocol
-
 LEVEL 3: Structural Heuristics
-   └── Position-based inference
-
 LEVEL 4: Position-Only Mode
-   └── Window bounds only
-
 LEVEL 5: Human Handoff
-   └── Escalation for edge cases
 ```
 
 ---
 
-## Confidence & Agent Decision
+## Confidence
 
 | Confidence | Threshold | Agent Action |
 |------------|-----------|--------------|
 | **HIGH** | > 0.8 | Execute immediately |
 | **MEDIUM** | 0.5-0.8 | Execute with monitoring |
 | **LOW** | 0.3-0.5 | Explore first |
-| **NONE** | < 0.2 | Explore + handoff |
+| **NONE** | < 0.2 | Human handoff |
 
 ---
 
@@ -104,6 +118,8 @@ LEVEL 5: Human Handoff
 ## Status
 
 - [x] Protocol: Complete
-- [x] macOS: Detailed spec complete
-- [x] Linux: Detailed spec complete
-- [ ] Implementation: Pending
+- [x] macOS: Detailed spec ready
+- [x] Linux: Detailed spec ready
+- [ ] macOS implementation: Pending
+- [ ] Linux implementation: Pending
+- [ ] Windows: Deferred
