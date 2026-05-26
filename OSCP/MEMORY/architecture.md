@@ -7,7 +7,8 @@ AGENT                                    OSCP SERVICE
  │                                           │
  │  oscp.getFrame() ─────────────────────────►│
  │  (on-demand)                               ├─► Query OS APIs
- │                                           ├─► Analyze tree
+ │                                           ├─► Fallback chain
+ │                                           ├─► Tree analysis
  │  ◄────────────────────────────────────────│
  │  { windows, elements, confidence }          │
  │                                           │
@@ -17,7 +18,7 @@ AGENT                                    OSCP SERVICE
  │  { success: true }                        │
 ```
 
-## No Streaming = On-Demand
+## On-Demand vs Streaming
 
 | Aspect | Old (Streaming) | New (On-Demand) |
 |--------|----------------|-----------------|
@@ -33,12 +34,13 @@ AGENT                                    OSCP SERVICE
 REQUEST HANDLER (on-demand)
 ├── oscp.getFrame() call
 ├── AXUIElement query
+├── CDP bridge (fallback)
 └── JSON response
 
 PRIMARY: AXUIElement
 ├── AppKit, SwiftUI
 ├── Coverage: 90%
-└── EXISTING (pyax, ax-element)
+└── IMPLEMENTED: Swift/Obj-C + C bridging
 
 FALLBACKS:
 ├── CDP Bridge (Safari/Chrome/Electron)
@@ -53,20 +55,22 @@ INPUT: CGEvent
 ```
 REQUEST HANDLER (on-demand)
 ├── oscp.getFrame() call
-├── AT-SPI2 query + X11 fallback
+├── AT-SPI2 query
+├── X11 fallback
+├── CDP bridge (fallback)
 └── JSON response
 
 PRIMARY: AT-SPI2
 ├── GTK, Qt, Swing
 ├── Coverage: 85%
-└── EXISTING (dogtail, pyatspi)
+└── IMPLEMENTED: Python (pyatspi) or Rust
 
 X11 FALLBACK:
 ├── XQueryTree
 ├── X11 desktops + Xwayland apps
 └── Coverage: +5%
 
-INPUT: /dev/uinput
+INPUT: /dev/uinput (primary) / XTest (fallback)
 ```
 
 ## OSCP Layer (Shared)
@@ -88,17 +92,31 @@ INPUT: /dev/uinput
 3. NATIVE CAPTURE (AXUIElement/AT-SPI2)
    │
    ▼
-4. TREE BUILDER (OSCP layer)
+4. FALLBACK CHAIN (if needed)
    │
    ▼
-5. TREE ANALYZER
+5. TREE BUILDER + ANALYZER
    │
    ▼
-6. IF QUALITY < THRESHOLD: FALLBACK CHAIN
+6. PROTOCOL RESPONSE (JSON)
    │
    ▼
-7. PROTOCOL RESPONSE (JSON)
-   │
-   ▼
-8. AGENT CLIENT
+7. AGENT CLIENT
 ```
+
+## Spec Status
+
+| Spec | Status |
+|------|--------|
+| Protocol | ✅ Complete |
+| macOS | ✅ Complete |
+| Linux | ✅ Complete |
+| Windows | ⏸️ Deferred |
+
+## Time Estimates
+
+| Platform | Time |
+|----------|------|
+| macOS | 4-5 weeks |
+| Linux | 6-7 weeks |
+| Total | 10-12 weeks |

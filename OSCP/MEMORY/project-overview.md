@@ -2,12 +2,10 @@
 
 ## Project Overview
 
-OSCP (Operating System Context Protocol) is a foundational protocol for agent-native OS interaction. It is a **wrapper + on-demand layer** on top of existing OS accessibility APIs.
+OSCP (Operating System Context Protocol) is a foundational protocol for agent-native OS interaction. It is a **wrapper + on-demand layer** on top of existing OS accessibility APIs. Agent requests screen state when needed; OSCP responds with semantic tree.
 
-**Key Changes from v0.3:**
-- ~~30fps streaming~~ → On-demand calls
-- Agent controls when to see the screen
-- Simpler architecture, lower overhead
+**Version:** 0.4.0
+**Status:** Specs complete. Ready for implementation.
 
 **Principle:** "Wrap existing tools. Respond on-demand. Handle errors gracefully. Agent provides meaning."
 
@@ -22,9 +20,9 @@ OSCP = WRAPPER + ON-DEMAND LAYER
         │              └── Agent-friendly output (confidence scores)
         │
         └── Existing OS Accessibility APIs
-             ├── AXUIElement (macOS)
-             ├── AT-SPI2 (Linux)
-             └── UIAutomation (Windows)
+             ├── AXUIElement (macOS) — 90% coverage
+             ├── AT-SPI2 (Linux) — 85% coverage
+             └── UIAutomation (Windows) — 85% coverage
 ```
 
 ## How It Works
@@ -33,32 +31,50 @@ OSCP = WRAPPER + ON-DEMAND LAYER
 AGENT                                     OSCP SERVICE
  │                                           │
  │  oscp.getFrame() ─────────────────────────►│
- │  (on-demand)                               ├─► Query OS APIs
- │                                           ├─► Analyze tree
+ │  (I need to see the screen)               │
+ │                                           ├─► Query OS APIs
+ │                                           ├─► Fallback chain
+ │                                           ├─► Tree analysis
  │  ◄────────────────────────────────────────│
  │  {                                       │
  │    "windows": [...],                       │
  │    "confidence": "HIGH"                   │
  │  }                                        │
+ │                                           │
+ │  oscp.click(bounds) ─────────────────────►│
+ │  ◄────────────────────────────────────────│
+ │  { success: true }                         │
 ```
 
-## What OSCP Wraps
+## Spec Status
 
-| Platform | Wraps | Coverage | Time |
-|----------|-------|----------|------|
-| **macOS** | AXUIElement | 95% | 4-5 weeks |
-| **Linux** | AT-SPI2 + X11 | 90-95% | 6-7 weeks |
-| **Windows** | UIAutomation | 90% | 6-7 weeks |
+| Spec | Status |
+|------|--------|
+| **Protocol** | ✅ Complete |
+| **macOS** | ✅ Complete (detailed) |
+| **Linux** | ✅ Complete (detailed) |
+| **Windows** | ⏸️ Deferred |
 
-## What OSCP Adds
+## Implementation Stack
 
-| Component | Description |
-|-----------|-------------|
-| **On-demand capture** | Agent requests frame when needed |
-| **Unified Protocol** | Same JSON format on all platforms |
-| **Error Handler** | 5-level fallback hierarchy |
-| **Tree Analyzer** | Coverage scores, confidence metrics |
-| **Input Engine** | Hardware-level actuation (CGEvent, /dev/uinput, SendInput) |
+### macOS
+
+- **API:** AXUIElement (native)
+- **Wrapper:** Swift/Objective-C with C bridging
+- **Input:** CGEvent
+- **Time:** 4-5 weeks
+
+### Linux
+
+- **API:** AT-SPI2 (primary) + X11 (fallback)
+- **Wrapper:** Python (pyatspi) or Rust
+- **Input:** /dev/uinput + XTest
+- **Time:** 6-7 weeks
+
+### Windows
+
+- **API:** UIAutomation
+- **Deferred** until after macOS/Linux
 
 ## Fallback Hierarchy
 
@@ -86,7 +102,7 @@ LEVEL 5: Human Handoff
 | **HIGH** | > 0.8 | Execute immediately |
 | **MEDIUM** | 0.5-0.8 | Execute with monitoring |
 | **LOW** | 0.3-0.5 | Explore candidates first |
-| **NONE** | < 0.2 | Explore + confirm or handoff |
+| **NONE** | < 0.2 | Human handoff |
 
 ## Agent Success Rate
 
@@ -99,31 +115,25 @@ LEVEL 5: Human Handoff
 
 **Overall success rate: 85-90% for typical desktop tasks.**
 
-## Key Changes from v0.3
+## Time Estimates
 
-| Aspect | Old (Streaming) | New (On-Demand) |
-|--------|----------------|-----------------|
-| **Pattern** | 30fps continuous push | Request-response |
-| **Agent control** | Passive receiver | Active requester |
-| **Resource usage** | Higher | Lower |
-| **Server complexity** | Higher | Lower |
-| **Time to build** | 12-16 weeks | 10-12 weeks |
-
-## Project Status
-
-- [x] Architecture updated (on-demand)
-- [x] Approach validated
-- [x] Per-platform specs defined
-- [ ] Implementation pending
+| Platform | Time |
+|----------|------|
+| macOS | 4-5 weeks |
+| Linux | 6-7 weeks |
+| Windows | Deferred |
+| **Total** | **10-12 weeks** |
 
 ## Key Files
 
 | File | Content |
 |------|---------|
-| `SPEC.md` | Full architecture |
-| `platforms/macos/SPEC.md` | macOS approach |
-| `platforms/linux/SPEC.md` | Linux approach |
-| `protocol/SPEC.md` | Protocol format |
+| `SPEC.md` | Architecture overview |
+| `protocol/SPEC.md` | Complete protocol (ready for impl) |
+| `platforms/macos/SPEC.md` | Detailed macOS implementation spec |
+| `platforms/linux/SPEC.md` | Detailed Linux implementation spec |
+| `agents/SPEC.md` | Agent SDK guidelines |
+| `MEMORY/DECISIONS.md` | Architectural decisions |
 
 ## References
 

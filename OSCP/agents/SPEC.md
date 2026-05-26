@@ -1,13 +1,13 @@
 # OSCP Agent Integration Specification
 
 **Version:** 0.4.0
-**Status:** Design Updated
+**Status:** Specs Complete
 
 ---
 
 ## Overview
 
-OSCP provides agents with on-demand, deterministic desktop interaction. Agent requests screen state when needed; OSCP responds with semantic tree. No continuous streaming.
+OSCP provides agents with on-demand, deterministic desktop interaction. Agent requests screen state when needed; OSCP responds with semantic tree.
 
 **Key Features:**
 - On-demand request-response (not streaming)
@@ -24,7 +24,7 @@ OSCP provides agents with on-demand, deterministic desktop interaction. Agent re
 Agent                                    OSCP Service
   │                                          │
   │  getFrame() ─────────────────────────────► │
-  │  (I need to see the screen)               │
+  │  (I need to see the screen)                │
   │                                          │
   │  ◄───────────────────────────────────────│
   │  {                                        │
@@ -42,68 +42,55 @@ Agent                                    OSCP Service
 
 ---
 
-## Connection Flow
-
-```
-Agent                          OSCP Service
-  │                                │
-  │  Connect (Unix/TCP)           │
-  │ ─────────────────────────────► │
-  │                                │
-  │  Send: hello                   │
-  │ ─────────────────────────────► │
-  │                                │
-  │  Receive: welcome              │
-  │ ◄───────────────────────────── │
-  │                                │
-  │  Request: get_frame            │
-  │ ─────────────────────────────► │
-  │                                │
-  │  Receive: frame                │
-  │ ◄───────────────────────────── │
-  │                                │
-  │  Send: actions                 │
-  │ ─────────────────────────────► │
-```
-
----
-
 ## Agent SDK Example
 
-### Python
+### Python SDK
 
 ```python
 import oscp
 
-# Connect
+# Connect to OSCP service
 client = oscp.connect("unix:///tmp/oscp.sock")
 
 # Agent workflow
 async def agent_task():
-    # Agent decides when to request
+    # 1. Agent requests screen state
     frame = await client.getFrame()
     
-    # Check quality
+    # 2. Check quality
     if frame.tree_analysis.confidence == "HIGH":
         # Find element
         save_button = frame.find(name="Save", type="button")
-        if save_button:
-            await client.click(save_button.bounds)
+        if save_button and save_button.confidence > 0.8:
+            # 3. Act immediately for high confidence
+            result = await client.click(save_button.bounds)
+            
+            # 4. Verify
+            verify_frame = await client.getFrame()
+            if verify_frame.tree_analysis.confidence == "HIGH":
+                # Continue with next task
+                pass
     
     elif frame.tree_analysis.confidence == "LOW":
-        # Explore candidates
-        candidates = frame.explore(position=save_button.bounds)
+        # Explore candidates for low confidence
+        candidates = frame.explore(save_button.bounds)
         for c in candidates:
             result = await client.click(c.bounds)
             if result.success:
                 break
+        else:
+            # All failed, request human handoff
+            await client.request_handoff()
     
     else:
-        # Human handoff
-        await client.request_handoff("Cannot find Save button")
+        # Human handoff required
+        await client.request_handoff(
+            reason="Cannot identify target element",
+            options=["Try exploring", "Human takes over"]
+        )
 ```
 
-### TypeScript
+### TypeScript SDK
 
 ```typescript
 import { createOSCPClient } from 'oscp-sdk';
@@ -118,55 +105,22 @@ async function agentTask() {
         for (const window of frame.windows) {
             for (const element of window.elements) {
                 if (element.name === 'Save' && element.confidence > 0.8) {
-                    client.click(element.bounds);
+                    const result = await client.click(element.bounds);
+                    if (result.success) {
+                        // Continue
+                    }
                 }
             }
         }
+    } else if (frame.treeAnalysis.confidence === 'LOW') {
+        // Explore candidates
+        const candidates = frame.explore({x: 1750, y: 5});
+        for (const c of candidates) {
+            const result = await client.click(c.bounds);
+            if (result.success) break;
+        }
     }
 }
-```
-
----
-
-## Best Practices
-
-### 1. Request When Needed
-
-```python
-# DON'T: Request blindly
-for i in range(1000):
-    frame = await client.getFrame()  # Unnecessary calls
-
-# DO: Request strategically
-frame = await client.getFrame()  # Before task
-# ... perform actions ...
-frame = await client.getFrame()  # After action, to verify
-```
-
-### 2. Always Check Confidence
-
-```python
-# DON'T: Assume element is clickable
-await client.click(element.bounds)
-
-# DO: Check confidence first
-if element.confidence > 0.8:
-    await execute()
-else:
-    await explore_first()
-```
-
-### 3. Handle Errors Gracefully
-
-```python
-# DO: Use fallbacks
-result = await execute(element)
-if not result.success:
-    for alternative in result.error.alternatives:
-        if alternative.confidence > 0.3:
-            result = await execute(alternative)
-            if result.success:
-                break
 ```
 
 ---
@@ -182,20 +136,116 @@ if not result.success:
 
 ---
 
+## Error Handling
+
+### Action Failure with Alternatives
+
+```python
+result = await client.click(element.bounds)
+
+if not result.success:
+    # Check error for alternatives
+    if result.error.alternatives:
+        for alt in result.error.alternatives:
+            if alt.confidence > 0.3:
+                retry = await client.click(bounds=alt.bounds)
+                if retry.success:
+                    break
+```
+
+### Tree Quality Response
+
+```python
+frame = await client.getFrame()
+
+if frame.tree_analysis.confidence == "NONE":
+    # Handle empty/custom renderer
+    await client.explore_and_confirm(element)
+```
+
+---
+
 ## Human Handoff Protocol
 
 ```json
 {
   "type": "handoff_request",
-  "reason": "Cannot identify Save button",
+  "reason": "Cannot identify target element",
   "reasoning": "Custom renderer detected, no element names",
   "attempts": 3,
+  "alternatives": [
+    {"bounds": {"x": 1700, "y": 5}, "confidence": 0.3},
+    {"bounds": {"x": 960, "y": 540}, "confidence": 0.2}
+  ],
   "options": [
-    "Agent explores and learns positions",
-    "Human clicks and agent learns from it",
+    "Agent explores at alternative positions",
+    "Human completes this specific task",
     "Skip this task"
   ]
 }
+```
+
+### Handoff Response
+
+```python
+await client.respond_handoff(
+    resolution="human_completed",
+    human_click={"x": 1750, "y": 5}
+)
+```
+
+---
+
+## Best Practices
+
+### 1. Request Strategically
+
+```python
+# Good: Request when needed
+frame = await client.getFrame()  # Before task
+# ... perform actions ...
+verify_frame = await client.getFrame()  # After action
+
+# Bad: Unnecessary requests
+for i in range(100):
+    frame = await client.getFrame()  # Wasteful
+```
+
+### 2. Always Check Confidence
+
+```python
+if element.confidence > 0.8:
+    await execute()  # High confidence
+else:
+    await explore_first()  # Lower confidence
+```
+
+### 3. Handle Failures Gracefully
+
+```python
+result = await execute(element)
+if not result.success:
+    for alt in result.error.alternatives:
+        if alt.confidence > 0.3:
+            if await client.click(alt.bounds).success:
+                break
+    else:
+        await client.request_handoff()
+```
+
+### 4. Monitor State Changes
+
+```python
+async def execute_with_monitoring(element):
+    before = await client.getFrame()
+    result = await execute(element)
+    after = await client.getFrame()
+    
+    if not state_changed(before, after):
+        # Action didn't have visible effect
+        return await explore_and_confirm(element)
+    
+    return result
 ```
 
 ---
@@ -208,5 +258,7 @@ if not result.success:
 
 ## Status
 
-- [x] Agent integration updated (on-demand model)
+- [x] Agent integration fully specified
+- [x] SDK examples provided
+- [x] Error handling documented
 - [ ] SDK implementation pending

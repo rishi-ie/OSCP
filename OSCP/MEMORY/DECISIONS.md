@@ -22,8 +22,6 @@
 - Faster to build (less complexity)
 - ~50-100ms latency per frame is acceptable for task-oriented agents
 
-**Change from v0.3:** Removed 30fps streaming. Agent calls `oscp.getFrame()` when needed.
-
 ### 3. Per-Platform Best Approach
 
 **Decision:** Use the best available existing tools per platform, wrapped uniformly.
@@ -75,15 +73,15 @@
 - Bypasses bot detection
 - Stable, well-documented
 
-### 8. macOS First
+### 8. macOS First, Linux Second, Windows Deferred
 
-**Decision:** Implement macOS before Linux and Windows.
+**Decision:** Implement macOS first, then Linux. Windows later.
 
 **Rationale:**
-- AXUIElement is most stable and well-documented
-- No compositor fragmentation
-- CGEvent is straightforward
-- Proven wrappers exist
+- macOS has the most stable, well-documented accessibility API
+- Linux has fragmentation (AT-SPI2 + X11 + Wayland)
+- Windows can be added after others work
+- Get working system faster with 2 platforms
 
 ### 9. Linux AT-SPI2 First, Wayland Native Deferred
 
@@ -93,6 +91,7 @@
 - AT-SPI2 covers 85% of Linux apps
 - X11/Xwayland covers most Wayland desktops
 - Wayland compositor fragmentation is unsolvable in V1
+- Wait for patterns to emerge
 
 ### 10. No VLM in V1
 
@@ -102,22 +101,40 @@
 - V1 must be fast, deterministic, cheap
 - VLM is slow, expensive, probabilistic
 - Keep scope tight for V1
+- VLM is fallback only, not foundation
 
-### 11. Human Handoff for Edge Cases
+---
 
-**Decision:** Human escalation for truly unrecoverable.
+## Time Estimates
 
-**What human needs:**
-- Games with custom renderers (50% recovery)
-- DRM video playback (blocked)
-- Canvas apps (Figma, CAD) (blocked)
-- Remote desktop (physical limitation)
+| Platform | Time |
+|----------|------|
+| macOS | 4-5 weeks |
+| Linux | 6-7 weeks |
+| Windows | Deferred |
 
-**What agent handles:**
-- Standard desktop work (95%)
-- Web (90% via CDP)
-- Custom apps (80% with heuristics)
-- Most daily agent tasks autonomously
+**Total: 10-12 weeks (macOS + Linux only)**
+
+---
+
+## Protocol Status
+
+Protocol specification (protocol/SPEC.md) is complete:
+- All message types defined
+- Error codes defined
+- Framing specified
+- Ready for implementation
+
+---
+
+## Platform Spec Status
+
+| Spec | Status |
+|------|--------|
+| Protocol | ✅ Complete |
+| macOS | ✅ Complete (detailed) |
+| Linux | ✅ Complete (detailed) |
+| Windows | ⏸️ Deferred |
 
 ---
 
@@ -136,6 +153,12 @@
 
 ## Rejected Approaches
 
+### Continuous Streaming (Rejected in v0.4)
+- Higher complexity
+- Passive agent (not active)
+- Higher resource usage
+- Agent doesn't need always-on awareness
+
 ### Build from scratch (Rejected)
 - AXUIElement, AT-SPI2, UIA are proven
 - Years of development invested in existing tools
@@ -145,64 +168,3 @@
 - Slow (~1-2s per frame) vs OSCP (~50-100ms)
 - Expensive ($0.01-0.10/frame) vs OSCP ($0.001/frame)
 - VLM is future extension, not V1 foundation
-
-### Continuous Streaming (Rejected in v0.4)
-- Higher complexity
-- Passive agent (not active)
-- Higher resource usage
-- Agent doesn't need always-on awareness
-
-### Pure position-based (Rejected)
-- Agent loses element types, names
-- Too much inference needed
-
----
-
-## Revised Complexity
-
-| Component | Complexity | Time |
-|-----------|------------|------|
-| Request handler | Low | 1 week |
-| API wrapping | Low-Medium | 2-3 weeks |
-| Fallback handling | Low | 1 week |
-| Input engine | Low-Medium | 1-2 weeks |
-| Testing | Medium-High | 2-3 weeks |
-
-| Platform | Time |
-|----------|------|
-| macOS | 4-5 weeks |
-| Linux | 6-7 weeks |
-| Windows | 6-7 weeks |
-
-**Total: 10-12 weeks (down from 12-16 weeks)**
-
----
-
-## VLM Fallback (V2+ Extension)
-
-```
-V1: OSCP on-demand (90% of cases)
-    ↓ (if coverage < 0.3)
-V2: VLM fallback (10% of cases)
-    ↓ (if VLM fails)
-V2: Human Handoff
-```
-
----
-
-## Platform-Specific Notes
-
-### macOS
-- Screen Recording + Accessibility permissions
-- AXUIElement for capture
-- CGEvent for input
-
-### Linux
-- at-spi2-core package + Accessibility enabled
-- AT-SPI2 + X11 fallback
-- /dev/uinput + XTest for input
-
-### Windows
-- UIAutomation on Windows 10+
-- SendInput for input injection
-- CDP bridge for Chrome/Edge
