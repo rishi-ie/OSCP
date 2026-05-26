@@ -1,7 +1,7 @@
 # OSCP — Operating System Context Protocol
 
-**Version:** 0.3.0
-**Status:** Architecture Finalized
+**Version:** 0.4.0
+**Status:** Design Updated
 
 ---
 
@@ -9,48 +9,46 @@
 
 > Make agents first-class citizens of operating systems designed for humans.
 
-OSCP is a **wrapper + streaming layer** on top of existing OS accessibility APIs. The hard parts are already built — OSCP adds streaming, unification, and error handling.
+OSCP is a **wrapper + on-demand layer** on top of existing OS accessibility APIs. Agent requests screen state when needed; OSCP responds with semantic tree. No continuous streaming.
+
+**Key Change:** No 30fps streaming. Agent controls when to see the screen.
 
 ---
 
 ## Principle
 
-> "Wrap existing tools. Add real-time streaming. Handle errors gracefully. Agent provides meaning."
+> "Wrap existing tools. Respond on-demand. Handle errors gracefully. Agent provides meaning."
 
 ---
 
 ## Architecture
 
 ```
-AGENT HARNESS
-     │
-OSCP Protocol
-     │
-┌────────────────────────────────────────────────────────────┐
-│              OSCP PLATFORM DRIVER                        │
-│                                                            │
-│   ┌─────────────┐  ┌──────────────┐  ┌─────────────────┐ │
-│   │  STREAMING  │  │    ERROR     │  │      INPUT      │ │
-│   │   ENGINE    │  │   HANDLER    │  │     ENGINE      │ │
-│   └────────┬─────┘  └──────┬──────┘  └────────┬────────┘ │
-│           │                │                  │           │
-│           │         ┌───────▼───────┐          │           │
-│           │         │    TREE       │◄─────────┘           │
-│           │         │   ANALYZER    │                      │
-│           │         └───────┬───────┘                      │
-│           │                 │                              │
-│           │    ┌────────────┴────────────┐                 │
-│           │    │                         │                 │
-│           │    ▼                         ▼                 │
-│           │   ▼                           ▼                 │
-│   ┌───────┴──────────────────┐  ┌─────────────────────────┐│
-│   │   PRIMARY CAPTURE         │  │    FALLBACK METHODS      ││
-│   │   (AXUIElement/AT-SPI2)   │  │    (CDP/X11/Position)    ││
-│   └────────────────────────────┘  └────────────────────────┘│
-└────────────────────────────────────────────────────────────┘
-     │
-Native OS APIs
+AGENT                                    OSCP SERVICE
+ │                                           │
+ │  oscp.getFrame() ─────────────────────────►│
+ │                                           ├─► Query APIs
+ │                                           ├─► Analyze tree
+ │  ◄────────────────────────────────────────│
+ │  { windows, elements, confidence }          │
+ │                                           │
+ │  oscp.click(bounds) ─────────────────────►│
+ │                                           ├─► Input injection
+ │  ◄────────────────────────────────────────│
+ │  { success: true }                        │
 ```
+
+---
+
+## No Streaming = On-Demand
+
+| Aspect | Old | New |
+|--------|-----|-----|
+| **Pattern** | 30fps continuous push | Request-response |
+| **Agent control** | Passive (receives stream) | Active (requests when needed) |
+| **Resource usage** | Higher | Lower |
+| **Latency** | <33ms | ~50-100ms |
+| **Complexity** | Higher | Lower |
 
 ---
 
@@ -66,13 +64,32 @@ Native OS APIs
 
 ## What OSCP Adds
 
-| Feature | Existing Tools | OSCP |
-|---------|----------------|------|
-| **Real-time streaming** | One-shot queries | 30fps updates |
-| **Unified protocol** | Per-platform APIs | Same format everywhere |
-| **Error handling** | Fail silently | Fallback hierarchy |
-| **Confidence scoring** | No quality metrics | Per-element confidence |
-| **Human handoff** | Not supported | Escalation protocol |
+| Feature | Description |
+|---------|-------------|
+| **On-demand capture** | Agent requests, OSCP responds |
+| **Unified protocol** | Same JSON format on all platforms |
+| **Error handling** | 5-level fallback hierarchy |
+| **Confidence scoring** | Per-element and per-tree confidence |
+| **Input engine** | Hardware-level actuation |
+
+---
+
+## How It Works
+
+```python
+# Agent requests when needed
+frame = await oscp.getFrame()
+
+# Agent decides
+save_button = frame.find(name="Save", type="button")
+
+# Act
+if save_button and save_button.confidence > 0.8:
+    await oscp.click(save_button.bounds)
+
+# Verify
+verify_frame = await oscp.getFrame()
+```
 
 ---
 
@@ -80,24 +97,15 @@ Native OS APIs
 
 ```
 LEVEL 1: Native Semantic Tree (90%)
-└── AXUIElement / AT-SPI2 / UIA
-
-LEVEL 2: CDP Bridge (Electron/Browser)
-└── Chrome DevTools Protocol
-
+LEVEL 2: CDP Bridge (Browser/Electron)
 LEVEL 3: Structural Heuristics
-└── Position-based inference
-
 LEVEL 4: Position-Only Mode
-└── Window bounds only
-
 LEVEL 5: Human Handoff
-└── Escalation for edge cases
 ```
 
 ---
 
-## Confidence & Agent Decision
+## Confidence Decision Table
 
 | Confidence | Threshold | Agent Action |
 |------------|-----------|--------------|
@@ -108,72 +116,25 @@ LEVEL 5: Human Handoff
 
 ---
 
-## How It Works
-
-```python
-# Agent connects to OSCP service
-client = oscp.connect("unix:///tmp/oscp.sock")
-
-# Real-time 30fps stream
-async for frame in client.stream():
-    if frame.tree_analysis.confidence == "HIGH":
-        # Standard desktop work - full speed
-        for element in frame.find("button"):
-            if element.name == "Save":
-                await client.click(element.bounds)
-    
-    elif frame.tree_analysis.confidence == "LOW":
-        # Edge case - explore candidates
-        candidates = frame.explore(element)
-        for c in candidates:
-            result = await client.click(c)
-            if result.success:
-                break
-```
-
----
-
 ## Implementation Stack
 
-| Platform | Wraps | Streaming | Input | Time |
-|----------|-------|-----------|-------|------|
-| **macOS** | AXUIElement (pyax) | AXObserver 30fps | CGEvent | 4-6 weeks |
-| **Linux** | AT-SPI2 (dogtail) | D-Bus events 30fps | /dev/uinput | 6-8 weeks |
-| **Windows** | UIAutomation (pywinauto) | UIA events 30fps | SendInput | 6-8 weeks |
+| Platform | Wraps | Input | Time |
+|----------|-------|-------|------|
+| **macOS** | AXUIElement | CGEvent | 4-5 weeks |
+| **Linux** | AT-SPI2 + X11 | /dev/uinput | 6-7 weeks |
+| **Windows** | UIAutomation | SendInput | 6-7 weeks |
 
-**Total: 12-16 weeks for all three platforms**
-
----
-
-## Update Note
-
-Windows implementation follows macOS and Linux. Start order: macOS → Linux → Windows.
-
----
-
-## Directory Structure
-
-```
-OSCP/
-├── protocol/              # Protocol specification
-│
-├── platforms/
-│   ├── macos/            # AXUIElement wrapper + streaming
-│   ├── linux/            # AT-SPI2 wrapper + streaming
-│   └── windows/          # UIA wrapper + streaming
-│
-└── agents/               # Agent SDK guidelines
-```
+**Total: 10-12 weeks**
 
 ---
 
 ## Status
 
-- [x] Architecture finalized
-- [x] Existing tools identified
-- [x] Per-platform approach defined
+- [x] Architecture updated (on-demand, not streaming)
+- [x] Request-response model defined
+- [x] Specifications updated
 - [ ] Implementation pending
 
 ---
 
-*OSCP — First-class access for agents.*
+*OSCP — On-demand desktop awareness for agents.*

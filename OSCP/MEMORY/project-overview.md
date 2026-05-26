@@ -2,43 +2,61 @@
 
 ## Project Overview
 
-OSCP (Operating System Context Protocol) is a foundational protocol for agent-native OS interaction. It is a **wrapper + streaming layer** on top of existing OS accessibility APIs.
+OSCP (Operating System Context Protocol) is a foundational protocol for agent-native OS interaction. It is a **wrapper + on-demand layer** on top of existing OS accessibility APIs.
 
-**Key Insight:** The hard parts are already built. OSCP adds real-time streaming, unified protocol, and error handling.
+**Key Changes from v0.3:**
+- ~~30fps streaming~~ → On-demand calls
+- Agent controls when to see the screen
+- Simpler architecture, lower overhead
 
-**Principle:** "Wrap existing tools. Add real-time streaming. Handle errors gracefully. Agent provides meaning."
+**Principle:** "Wrap existing tools. Respond on-demand. Handle errors gracefully. Agent provides meaning."
 
 ## Core Architecture
 
 ```
-OSCP = WRAPPER + STREAMING LAYER
+OSCP = WRAPPER + ON-DEMAND LAYER
         │              │
-        │              ├── Real-time 30fps
+        │              ├── On-demand request-response
         │              ├── Unified protocol (all platforms)
         │              ├── Error handling (5-level fallback)
         │              └── Agent-friendly output (confidence scores)
         │
         └── Existing OS Accessibility APIs
-             ├── AXUIElement (macOS) — 90% coverage
-             ├── AT-SPI2 (Linux) — 85% coverage
-             └── UIAutomation (Windows) — 85% coverage
+             ├── AXUIElement (macOS)
+             ├── AT-SPI2 (Linux)
+             └── UIAutomation (Windows)
+```
+
+## How It Works
+
+```
+AGENT                                     OSCP SERVICE
+ │                                           │
+ │  oscp.getFrame() ─────────────────────────►│
+ │  (on-demand)                               ├─► Query OS APIs
+ │                                           ├─► Analyze tree
+ │  ◄────────────────────────────────────────│
+ │  {                                       │
+ │    "windows": [...],                       │
+ │    "confidence": "HIGH"                   │
+ │  }                                        │
 ```
 
 ## What OSCP Wraps
 
 | Platform | Wraps | Coverage | Time |
 |----------|-------|----------|------|
-| **macOS** | AXUIElement + pyax/ax-element | 95% | 4-6 weeks |
-| **Linux** | AT-SPI2 + X11 + dogtail | 90-95% | 6-8 weeks |
-| **Windows** | UIAutomation + pywinauto | 90% | 6-8 weeks |
+| **macOS** | AXUIElement | 95% | 4-5 weeks |
+| **Linux** | AT-SPI2 + X11 | 90-95% | 6-7 weeks |
+| **Windows** | UIAutomation | 90% | 6-7 weeks |
 
 ## What OSCP Adds
 
 | Component | Description |
 |-----------|-------------|
-| **Streaming Engine** | 30fps real-time updates (existing APIs are one-shot) |
+| **On-demand capture** | Agent requests frame when needed |
 | **Unified Protocol** | Same JSON format on all platforms |
-| **Error Handler** | 5-level fallback hierarchy for empty/unhelpful trees |
+| **Error Handler** | 5-level fallback hierarchy |
 | **Tree Analyzer** | Coverage scores, confidence metrics |
 | **Input Engine** | Hardware-level actuation (CGEvent, /dev/uinput, SendInput) |
 
@@ -65,10 +83,10 @@ LEVEL 5: Human Handoff
 
 | Confidence | Threshold | Agent Action |
 |------------|-----------|--------------|
-| **HIGH** | > 0.8 coverage | Execute immediately |
-| **MEDIUM** | 0.5-0.8 coverage | Execute with monitoring |
-| **LOW** | 0.3-0.5 coverage | Explore candidates first |
-| **NONE** | < 0.3 coverage | Explore + confirm or handoff |
+| **HIGH** | > 0.8 | Execute immediately |
+| **MEDIUM** | 0.5-0.8 | Execute with monitoring |
+| **LOW** | 0.3-0.5 | Explore candidates first |
+| **NONE** | < 0.2 | Explore + confirm or handoff |
 
 ## Agent Success Rate
 
@@ -77,39 +95,36 @@ LEVEL 5: Human Handoff
 | Standard desktop (VS Code, Chrome, Terminal) | 95% | 5% |
 | Standard web (DOM-accessible) | 90% | 10% |
 | Custom apps (learns as goes) | 80% | 20% |
-| Games (custom renderers) | 50% (exploration) | 50% |
-| DRM video | 0% (blocked) | 100% |
-| Canvas apps (Figma, CAD) | 0% | 100% |
-| Remote desktop | 0% | 100% |
+| Games (custom renderers) | 50% | 50% |
 
 **Overall success rate: 85-90% for typical desktop tasks.**
 
-## Implementation Order
+## Key Changes from v0.3
 
-1. **macOS** first (simplest, AXUIElement is well-documented)
-2. **Linux** second (more complex, D-Bus, Wayland)
-3. **Windows** third (similar to macOS)
+| Aspect | Old (Streaming) | New (On-Demand) |
+|--------|----------------|-----------------|
+| **Pattern** | 30fps continuous push | Request-response |
+| **Agent control** | Passive receiver | Active requester |
+| **Resource usage** | Higher | Lower |
+| **Server complexity** | Higher | Lower |
+| **Time to build** | 12-16 weeks | 10-12 weeks |
 
 ## Project Status
 
-- [x] Architecture finalized
-- [x] Existing tools identified
-- [x] Per-platform approach defined
+- [x] Architecture updated (on-demand)
+- [x] Approach validated
+- [x] Per-platform specs defined
 - [ ] Implementation pending
 
 ## Key Files
 
 | File | Content |
 |------|---------|
-| `SPEC.md` | Full architecture diagram |
-| `MEMORY/architecture.md` | Architecture reference |
+| `SPEC.md` | Full architecture |
 | `platforms/macos/SPEC.md` | macOS approach |
 | `platforms/linux/SPEC.md` | Linux approach |
-| `platforms/windows/SPEC.md` | Windows approach |
 | `protocol/SPEC.md` | Protocol format |
 
 ## References
 
 - GitHub: github.com/rishi-ie/OSCP
-- Protocol: OSCP/protocol/SPEC.md
-- Architecture: OSCP/MEMORY/architecture.md

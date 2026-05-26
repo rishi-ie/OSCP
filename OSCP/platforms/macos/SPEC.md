@@ -1,15 +1,18 @@
 # OSCP macOS Platform Driver Specification
 
-**Version:** 0.3.0
-**Status:** Architecture Finalized
+**Version:** 0.4.0
+**Status:** Design Updated
 
 ---
 
 ## Overview
 
-The macOS platform driver wraps AXUIElement with a streaming layer.
+The macOS platform driver wraps AXUIElement and responds to on-demand requests.
 
-**Key Insight:** AXUIElement already extracts the semantic tree. OSCP adds streaming, unified protocol, and error handling.
+**Key Changes from v0.3:**
+- No 30fps streaming
+- Request-response model
+- Agent controls when to request
 
 ---
 
@@ -17,39 +20,35 @@ The macOS platform driver wraps AXUIElement with a streaming layer.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                 Platform Driver                             │
-│                                                             │
-│  ┌─────────────────┐  ┌──────────────────┐  ┌───────────┐ │
-│  │  STREAMING      │  │  ERROR HANDLER   │  │   INPUT   │ │
-│  │   ENGINE        │  │  + FALLBACKS     │  │  ENGINE   │ │
-│  │  (30fps)        │  │                  │  │           │ │
-│  └────────┬────────┘  └────────┬─────────┘  └─────┬─────┘ │
-│           │                    │                  │         │
-│           │             ┌──────▼──────┐          │         │
-│           │             │   TREE      │◄─────────┘         │
-│           │             │  ANALYZER   │                    │
-│           │             └──────┬──────┘                    │
-│           │                    │                          │
-│           │    ┌───────────────┴────────────┐            │
-│           │    │                            │            │
-│           │    ▼                            ▼            │
-│           │   ▼                              ▼           │
-│  ┌────────┴──────────────┐  ┌──────────────────────────┐ │
-│  │   PRIMARY CAPTURE      │  │    FALLBACK METHODS      │ │
-│  │                        │  │                          │ │
-│  │   AXUIElement          │  │    CDP Bridge             │ │
-│  │   ────────────         │  │    (Safari/Chrome/Electron)│ │
-│  │   Coverage: 90%        │  │                          │ │
-│  │                        │  │    Position-Only Mode     │ │
-│  │   AppKit, SwiftUI     │  │    (Metal/OpenGL games)   │ │
-│  │   Standard controls  │  │                          │ │
-│  │                        │  │    Human Handoff          │ │
-│  └────────────────────────┘  └──────────────────────────┘ │
+│                 macOS Platform Driver                      │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │                 INPUT ENGINE                         │  │
-│  │  CGEventPost — click, type, key combos               │  │
+│  │              REQUEST HANDLER                         │  │
+│  │                                                      │  │
+│  │   onDemand:                                         │  │
+│  │   ├── C API call to AXUIElement                     │  │
+│  │   ├── Handle errors                                 │  │
+│  │   └── Return frame JSON                             │  │
 │  └──────────────────────────────────────────────────────┘  │
+│                             │                             │
+│  ┌──────────────────────────┼───────────────────────────┐ │
+│  │                    TREE ANALYZER                      │ │
+│  │   coverage_score, named_elements, confidence           │ │
+│  └──────────────────────────┴───────────────────────────┘ │
+│                             │                             │
+│                 ┌───────────┴───────────┐                  │
+│                 ▼                       ▼                  │
+│  ┌──────────────────────────┐  ┌──────────────────────────┐ │
+│  │   PRIMARY: AXUIElement  │  │   FALLBACKS:             │ │
+│  │   Coverage: 90%          │  │   • CDP Bridge           │ │
+│  │   AppKit, SwiftUI        │  │   • Position-Only        │ │
+│  │                          │  │   • Human Handoff        │ │
+│  └──────────────────────────┘  └──────────────────────────┘ │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐ │
+│  │                INPUT ENGINE                          │ │
+│  │   click(), type(), key_combo() via CGEvent            │ │
+│  └──────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -73,19 +72,6 @@ Provides:
 └── Application enumeration
 ```
 
-### AXObserver (Streaming)
-
-```
-EXISTING: AXObserver (Apple's observation API)
-USAGE: Real-time change notifications
-
-Provides:
-├── Element creation events
-├── Element destruction events
-├── Property change events
-└── Window focus changes
-```
-
 ### CGEvent (Input)
 
 ```
@@ -100,95 +86,28 @@ Provides:
 
 ---
 
-## Streaming Engine
+## Request-Response Model
 
-```
-IMPLEMENTATION: AXObserver + Poll Interval
+### Agent Request
 
-AXObserver (preferred):
-├── 30fps notification loop
-├── Watch for AXUIElement changes
-├── System events trigger capture
-└── Efficient (event-driven)
-
-Poll Interval (fallback):
-├── 33ms interval timer
-├── Query focused app hierarchy
-└── Detect structural changes
-
-Both channels feed the same tree builder.
+```python
+# When agent needs to see screen
+frame = await oscp.getFrame()
 ```
 
----
-
-## Fallback Hierarchy
-
-```
-LEVEL 1: AXUIElement (Primary)
-├── AppKit controls
-├── SwiftUI controls
-├── Standard macOS apps
-└── Coverage: 90%
-
-LEVEL 2: CDP Bridge
-├── Safari (WebKit)
-├── Chrome
-├── Electron apps
-└── Coverage: +4%
-
-LEVEL 3: Position-Only Mode
-├── Metal apps
-├── OpenGL apps
-├── Games
-└── Works when tree is empty
-
-LEVEL 4: Human Handoff
-├── Non-app windows
-├── Screen sharing content
-└── Unrecoverable cases
-```
-
----
-
-## Tree Analyzer
-
-```swift
-func analyzeTree(_ tree: AXUIElementHierarchy) -> TreeAnalysis {
-    let coverage = tree.coveredBounds / tree.windowBounds
-    let namedRatio = tree.namedCount / tree.totalCount
-    
-    let confidence: Confidence
-    if coverage < 0.3 {
-        confidence = .NONE
-    } else if coverage < 0.5 {
-        confidence = .LOW
-    } else if coverage < 0.8 {
-        confidence = .MEDIUM
-    } else {
-        confidence = .HIGH
-    }
-    
-    return TreeAnalysis(
-        coverageScore: coverage,
-        namedElements: tree.namedCount,
-        unlabeledElements: tree.unlabeledCount,
-        confidence: confidence)
-}
-```
-
----
-
-## Output Format
+### OSCP Response
 
 ```json
 {
-  "type": "render_tree",
+  "type": "frame",
+  "request_id": "req_001",
+  "frame_id": 12345,
   "platform": "macOS",
+  "latency_ms": 45,
   "windows": [
     {
       "id": "win_0x400001",
       "title": "VS Code",
-      "pid": 1234,
       "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
       "focused": true,
       "elements": [
@@ -197,7 +116,6 @@ func analyzeTree(_ tree: AXUIElementHierarchy) -> TreeAnalysis {
           "type": "button",
           "name": "Save",
           "bounds": {"x": 1750, "y": 5, "w": 80, "h": 25},
-          "states": ["enabled", "visible"],
           "confidence": 0.95,
           "source": "axuielement"
         }
@@ -206,73 +124,61 @@ func analyzeTree(_ tree: AXUIElementHierarchy) -> TreeAnalysis {
   ],
   "tree_analysis": {
     "coverage_score": 0.9,
-    "named_elements": 150,
-    "unlabeled_elements": 12,
-    "confidence": "HIGH",
-    "recommended_action": "execute"
+    "confidence": "HIGH"
   }
 }
 ```
 
 ---
 
-## Implementation Stack
+## Error Handling
 
-| Layer | Technology |
-|-------|------------|
-| **Driver** | Swift, Objective-C, or Rust |
-| **AXUIElement Wrapper** | pyax, native C, or Rust bindings |
-| **Protocol Server** | Unix socket + JSON |
-| **Input** | CGEvent (Core Graphics) |
-
----
-
-## System Requirements
+### Tree Quality Check
 
 ```
-REQUIRED:
-├── macOS 12.0+
-├── Screen Recording permission (for full access)
-└── Accessibility permission (for input and tree)
-
-PERMISSIONS:
-├── Screen Recording — enables AXUIElement access
-├── Accessibility — enables input injection
-└── Grant via System Preferences > Privacy & Security
+1. Capture via AXUIElement
+2. Analyze coverage_score
+3. If coverage < 0.3:
+   └── Try CDP bridge (Safari, Chrome, Electron)
+4. If still low:
+   └── Position-only mode
+5. If all fails:
+   └── Human handoff
 ```
-
----
-
-## Installation
-
-```bash
-brew install oscp
-```
-
-After installation, grand permissions:
-1. System Preferences > Privacy & Security > Screen Recording
-2. Check: OSCP
-3. System Preferences > Accessibility
-4. Check: OSCP
 
 ---
 
 ## Time Estimate
 
 | Component | Complexity | Time |
-|-----------|-----------|------|
+|-----------|------------|------|
 | AXUIElement wrapping | Low | 1-2 weeks |
-| AXObserver streaming | Low | 1 week |
+| Request handler | Low | 1 week |
 | CDP bridge | Medium | 1-2 weeks |
 | Error handling | Low | 1 week |
 | CGEvent input | Low | 1 week |
 | Testing | Medium | 1-2 weeks |
-| **Total macOS** | | **4-6 weeks** |
+| **Total macOS** | | **4-5 weeks** |
+
+---
+
+## Permissions
+
+- **Screen Recording** — Enables AXUIElement access
+- **Accessibility** — Enables CGEvent input injection
 
 ---
 
 ## Status
 
-✅ Architecture documented
-✅ Existing tools identified
-⏳ Implementation pending
+- [x] Architecture updated
+- [x] Request-response model defined
+- [ ] Implementation pending
+
+---
+
+## References
+
+- [AXUIElement Documentation](https://developer.apple.com/documentation/application-services)
+- [pyax](https://github.com/pyax/pyax) - Python AXUIElement wrapper
+- [ax-element](https://github.com/nalexand/ax-element) - Rust AXUIElement bindings

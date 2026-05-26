@@ -1,13 +1,18 @@
 # OSCP Architecture Specification
 
-**Version:** 0.3.0
-**Status:** Architecture Finalized
+**Version:** 0.4.0
+**Status:** Design Updated
 
 ---
 
 ## Overview
 
-OSCP is a **wrapper + streaming layer** on top of existing OS accessibility APIs. The hard parts are already built. OSCP adds real-time streaming, unified protocol, and error handling.
+OSCP is a **wrapper + request-response layer** on top of existing OS accessibility APIs. Agent requests screen state on-demand; OSCP responds with semantic tree. No continuous streaming.
+
+**Key Changes from v0.3:**
+- ~~30fps streaming~~ → On-demand calls
+- Agent controls when to see the screen
+- Simpler architecture, lower overhead
 
 ---
 
@@ -17,17 +22,13 @@ OSCP is a **wrapper + streaming layer** on top of existing OS accessibility APIs
 ┌─────────────────────────────────────────────────────────────────┐
 │                     AGENT HARNESS                                 │
 │                                                                 │
-│   Agent receives:                                               │
+│   Agent decides when to request:                                 │
 │   {                                                             │
-│     "frame_id": 12345,                                         │
-│     "platform": "macOS",                                        │
-│     "windows": [...],                                           │
-│     "tree_analysis": {...},                                    │
-│     "mouse": {...}                                             │
+│     "await oscp.getFrame()"                                     │
 │   }                                                            │
 └─────────────────────────────────────────────────────────────────┘
                              │
-                    OSCP Protocol
+                        OSCP Protocol
                              │
     ┌────────────────────────┼────────────────────────┐
     │                        │                        │
@@ -36,8 +37,8 @@ OSCP is a **wrapper + streaming layer** on top of existing OS accessibility APIs
 │                 OSCP PLATFORM DRIVER                         │
 │                                                             │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌────────────┐ │
-│  │    STREAMING    │  │   ERROR HANDLER │  │   INPUT    │ │
-│  │    ENGINE       │  │   + FALLBACKS   │  │   ENGINE   │ │
+│  │   REQUEST       │  │   ERROR HANDLER │  │   INPUT    │ │
+│  │   HANDLER       │  │   + FALLBACKS   │  │   ENGINE   │ │
 │  └────────┬────────┘  └────────┬────────┘  └─────┬──────┘ │
 │           │                    │                 │          │
 │           │              ┌──────▼──────┐         │          │
@@ -48,7 +49,6 @@ OSCP is a **wrapper + streaming layer** on top of existing OS accessibility APIs
 │           │    ┌──────────────┴──────────────┐            │
 │           │    │                              │            │
 │           │    ▼                              ▼            │
-│           │   ▼                                ▼           │
 │  ┌────────┴──┴──────────────┐    ┌────────────┴─────────┐  │
 │  │   PRIMARY CAPTURE       │    │   FALLBACK METHODS    │  │
 │  │   (AXUIElement/AT-SPI2) │    │   (CDP/X11/Position)  │  │
@@ -57,290 +57,61 @@ OSCP is a **wrapper + streaming layer** on top of existing OS accessibility APIs
 └─────────────────────────────────────────────────────────────┘
                              │
                     Native OS APIs
-                             │
-                    OS LEVEL ACCESSIBILITY
 ```
 
 ---
 
-## macOS Architecture
+## How It Works
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                 macOS Platform Driver                            │
-│                                                                 │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │                    STREAMING ENGINE                        │ │
-│  │  ┌──────────────────────────────────────────────────────┐ │ │
-│  │  │ AX Observer (30fps) — watches for AXUIElement changes │ │ │
-│  │  │ Poll Interval: 33ms                                    │ │ │
-│  │  └──────────────────────────────────────────────────────┘ │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                              │                                  │
-│  ┌───────────────────────────┼────────────────────────────────┐│
-│  │                    TREE ANALYZER                            │ │
-│  │  • coverage_score                                  │ │
-│  │  • named_elements vs unlabeled_elements            │ │
-│  │  • confidence: HIGH/MEDIUM/LOW/NONE                │ │
-│  └───────────────────────────┬────────────────────────────────┘│
-│                              │                                  │
-│                 ┌───────────┴───────────┐                     │
-│                 ▼                       ▼                       │
-│  ┌──────────────────────────┐  ┌──────────────────────────────┐│
-│  │    PRIMARY CAPTURE       │  │    FALLBACK METHODS          ││
-│  │    ──────────────────    │  │    ─────────────────────     ││
-│  │                          │  │                              ││
-│  │    AXUIElement           │  │    CDP Bridge                ││
-│  │    ─────────────         │  │    (Safari/Chrome/Electron)  ││
-│  │    AppKit, SwiftUI       │  │                              ││
-│  │    Standard controls    │  │    Screen Region (OBSOLETE)  ││
-│  │    50-100ms capture      │  │    (Not used — no VLMs)      ││
-│  │                          │  │                              ││
-│  │    Coverage: 90%        │  │    Position-Only Mode        ││
-│  │                          │  │    (Metal/OpenGL games)      ││
-│  │                          │  │                              ││
-│  │                          │  │    Human Handoff             ││
-│  └──────────────────────────┘  └──────────────────────────────┘│
-│                                                                 │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │                    INPUT ENGINE                           │ │
-│  │  CGEventPost — click, type, key combos                    │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Wrapped Technology
-
-| Component | Source | OSCP Role |
-|-----------|--------|-----------|
-| **AXUIElement** | Native macOS API | Extract semantic tree |
-| **AXObserver** | Native macOS API | Real-time change notifications |
-| **AXUIElementCopyElementAtPosition** | Native macOS API | Hit testing |
-| **CGEvent** | Native macOS API | Input injection |
-
-### Existing Libraries
-
-```
-WRAPPERS (OSCP uses these):
-├── pyax — Python AXUIElement wrapper
-├── ax-element — Rust AXUIElement bindings
-└── accessibility-service — System-level API
-
-OSCP DOES NOT REIMPLEMENT:
-├── How to query AXUIElement attributes
-├── How to traverse element hierarchy
-└── How to get bounds from AXUIElement
-```
-
-### What OSCP Adds on macOS
-
-```
-WHAT OSCP ADDS:
-├── Real-time streaming (AXObserver loop at 30fps)
-├── Tree quality analysis
-├── Unified error handling with fallbacks
-├── Protocol server (Unix socket)
-├── CDP bridge for Safari/Chrome
-├── CGEvent input engine
-└── Agent-friendly JSON output
-
-WHAT OSCP DOES NOT REIMPLEMENT:
-├── AXUIElement querying
-├── Element tree traversal
-└── Attribute extraction
+AGENT                                     OSCP SERVICE
+ │                                          │
+ │  oscp.getFrame() ──────────────────────────►│
+ │                                          ├─► AXUIElement query
+ │                                          ├─► Tree analysis
+ │                                          ├─► Coverage check
+ │                                          │   (fallback if needed)
+ │  ◄────────────────────────────────────────│
+ │  {                                        │
+ │    "frame_id": 12345,                     │
+ │    "platform": "macOS",                   │
+ │    "windows": [...],                      │
+ │    "tree_analysis": {...}                 │
+ │  }                                        │
+ │                                          │
+ │  oscp.click(element.bounds) ─────────────► │
+ │                                          ├─► CGEvent injection
+ │  ◄────────────────────────────────────────│
+ │  { success: true, confidence: 0.95 }        │
 ```
 
 ---
 
-## Linux Architecture
+## Request Types
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                 Linux Platform Driver                            │
-│                                                                 │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │                    STREAMING ENGINE                        │ │
-│  │  ┌──────────────────────────────────────────────────────┐ │ │
-│  │  │ AT-SPI2 Observer — watches for accessibility events  │ │ │
-│  │  │ + Poll Interval for D-Bus (fallback)                │ │ │
-│  │  └──────────────────────────────────────────────────────┘ │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                              │                                  │
-│  ┌───────────────────────────┼────────────────────────────────┐│
-│  │                    TREE ANALYZER                            │ │
-│  │  • coverage_score                                  │ │
-│  │  • named_elements vs unlabeled_elements            │ │
-│  │  • confidence: HIGH/MEDIUM/LOW/NONE                │ │
-│  └───────────────────────────┬────────────────────────────────┘│
-│                              │                                  │
-│                 ┌───────────┴───────────┐                     │
-│                 ▼                       ▼                       │
-│  ┌──────────────────────────┐  ┌──────────────────────────────┐│
-│  │    PRIMARY CAPTURE       │  │    FALLBACK METHODS          ││
-│  │                          │  │                              ││
-│  │    AT-SPI2              │  │    CDP Bridge                ││
-│  │    ──────────           │  │    (Chrome/Firefox/Electron) ││
-│  │    GTK, Qt, Swing       │  │                              ││
-│  │    Standard controls    │  │    X11                       ││
-│  │    ~50ms capture        │  │    (XQueryTree)              ││
-│  │    Coverage: 85%        │  │    — X11 desktops            ││
-│  │                          │  │    — Xwayland apps           ││
-│  │                          │  │                              ││
-│  │                          │  │    Position-Only Mode        ││
-│  │                          │  │                              ││
-│  │                          │  │    Human Handoff             ││
-│  └──────────────────────────┘  └──────────────────────────────┘│
-│                                                                 │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │                    INPUT ENGINE                             │ │
-│  │  /dev/uinput — click, type, key combos                     │ │
-│  │  XTest fallback (X11 desktops)                             │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Wrapped Technology
-
-| Component | Source | OSCP Role |
-|-----------|--------|-----------|
-| **AT-SPI2** | D-Bus accessibility bus | Extract semantic tree |
-| **at-spi-bus** | System daemon | Application enumeration |
-| **org.a11y.Bus** | D-Bus | AT-SPI2 connection |
-| **X11** | X Window System | X11 + Xwayland fallback |
-| **/dev/uinput** | Linux kernel | Input injection |
-
-### Existing Libraries
-
-```
-WRAPPERS (OSCP uses these):
-├── dogtail — Python AT-SPI2 library
-├── pyatspi — PyAT-SPI2 bindings
-├── ldtp — Linux Desktop Testing Project
-├── at-spi2-core — System accessibility daemon
-
-OSCP DOES NOT REIMPLEMENT:
-├── How to connect to at-spi-bus
-├── How to query AT-SPI2 objects
-├── How to get bounds from AT-SPI2
-└── How to handle D-Bus events
-```
-
-### What OSCP Adds on Linux
-
-```
-WHAT OSCP ADDS:
-├── Real-time streaming (AT-SPI2 events + polling)
-├── Tree quality analysis
-├── X11 fallback for non-AT-SPI2 apps
-├── Unified error handling with fallbacks
-├── Protocol server (Unix socket)
-├── CDP bridge for Chrome/Firefox
-├── /dev/uinput input engine
-└── Agent-friendly JSON output
-
-WHAT OSCP DOES NOT REIMPLEMENT:
-├── AT-SPI2 D-Bus connection
-├── Element tree traversal
-├── Application enumeration
-└── Bounds extraction
-```
-
----
-
-## OSCP Layer (Shared)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                 OSCP LAYER (Cross-Platform)                     │
-│                                                                 │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │                 PROTOCOL SERVER                            │ │
-│  │                 ─────────────────                          │ │
-│  │  Transport: Unix socket (/tmp/oscp.sock)                │ │
-│  │  Protocol: JSON over TCP-like stream                     │ │
-│  │  Framing: 30fps render tree frames                       │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │                 TREE BUILDER                              │ │
-│  │                 ────────────                               │ │
-│  │  Converts native elements → OSCP element format          │ │
-│  │  { id, type, name, bounds, states, confidence, source }   │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │                 ERROR HANDLER                              │ │
-│  │                 ──────────────                              │ │
-│  │  Fallback hierarchy:                                       │ │
-│  │  1. Native tree (primary)                                  │ │
-│  │  2. CDP bridge (browser support)                          │ │
-│  │  3. X11 | Screen region (platform fallback)               │ │
-│  │  4. Position-only mode                                     │ │
-│  │  5. Human handoff                                          │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │                 TREE ANALYZER                               │ │
-│  │                 ─────────────                               │ │
-│  │  coverage_score: 0.0-1.0                                  │ │
-│  │  named_elements: count                                      │ │
-│  │  unnamed_elements: count                                    │ │
-│  │  confidence: HIGH (>0.8) | MEDIUM | LOW | NONE (<0.2)     │ │
-│  │  recommended_action: execute | explore | handoff          │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Data Flow
-
-```
-1. NATIVE CAPTURE (AXUIElement or AT-SPI2)
-   │
-   │ Raw element hierarchy
-   ▼
-2. TREE BUILDER (OSCP layer)
-   │
-   │ Standardized element format
-   ▼
-3. TREE ANALYZER
-   │
-   │ Quality metrics
-   ▼
-4. IF QUALITY < THRESHOLD:
-   │
-   │ Primary tree empty/unhelpful
-   ▼
-   FALLBACK CHAIN (try next method)
-   │
-5. PROTOCOL SERVER
-   │
-   │ JSON format
-   ▼
-6. AGENT CLIENTS
-```
-
----
-
-## Output Format
-
-### Standard Frame
+### Agent → OSCP: Get Frame
 
 ```json
 {
-  "type": "render_tree",
+  "type": "get_frame",
+  "request_id": "req_001",
+  "timestamp": 1716576000000
+}
+```
+
+### OSCP → Agent: Frame Response
+
+```json
+{
+  "type": "frame",
+  "request_id": "req_001",
   "frame_id": 12345,
   "platform": "macOS",
-  "timestamp": 1716576000000,
+  "latency_ms": 45,
   "windows": [
     {
       "id": "win_0x400001",
       "title": "VS Code",
-      "pid": 1234,
       "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
       "focused": true,
       "elements": [
@@ -348,9 +119,7 @@ WHAT OSCP DOES NOT REIMPLEMENT:
           "id": "e_001",
           "type": "button",
           "name": "Save",
-          "description": "",
           "bounds": {"x": 1750, "y": 5, "w": 80, "h": 25},
-          "states": ["enabled", "visible"],
           "confidence": 0.95,
           "source": "axuielement"
         }
@@ -361,9 +130,8 @@ WHAT OSCP DOES NOT REIMPLEMENT:
     "coverage_score": 0.9,
     "named_elements": 150,
     "unlabeled_elements": 12,
-    "avg_depth": 4.2,
     "confidence": "HIGH",
-    "recommended_action": "execute"
+    "fallback_method": null
   },
   "mouse": {
     "x": 540,
@@ -373,98 +141,273 @@ WHAT OSCP DOES NOT REIMPLEMENT:
 }
 ```
 
-### Fallback Frame
+### Agent → OSCP: Perform Action
 
 ```json
 {
-  "type": "render_tree",
-  "frame_id": 12346,
-  "platform": "linux",
-  "windows": [
-    {
-      "id": "win_0x500001",
-      "title": "Game",
-      "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
-      "elements": [],
-      "fallback_active": true,
-      "fallback_method": "position_only",
-      "fallback_reason": "custom_renderer_detected"
-    }
-  ],
-  "tree_analysis": {
-    "coverage_score": 0.05,
-    "named_elements": 0,
-    "unlabeled_elements": 1,
-    "avg_depth": 1,
-    "confidence": "NONE",
-    "recommended_action": "explore_or_handoff"
+  "type": "action",
+  "action_id": "act_001",
+  "action": {
+    "kind": "click",
+    "x": 1750,
+    "y": 17
   }
+}
+```
+
+### OSCP → Agent: Action Result
+
+```json
+{
+  "type": "action_result",
+  "action_id": "act_001",
+  "success": true,
+  "confidence": 0.95,
+  "error": null
 }
 ```
 
 ---
 
-## Confidence Decision Table
+## No Streaming = Simpler
 
-| Tree Confidence | Threshold | Agent Action |
-|-----------------|-----------|--------------|
-| **HIGH** | > 0.8 coverage, >50% named | Execute immediately |
-| **MEDIUM** | 0.5-0.8 coverage | Execute + monitor state |
-| **LOW** | 0.3-0.5 coverage | Explore candidates first |
-| **NONE** | < 0.3 coverage | Explore + confirm or handoff |
-
----
-
-## Implementation Stack
-
-| Layer | Technology |
-|-------|------------|
-| **Platform Driver** | C/Rust (macOS), Python/Rust (Linux) |
-| **Protocol Server** | Any language with Unix socket + JSON |
-| **Agent SDK** | Python, TypeScript (or existing pi SDK) |
-| **Input Engine** | CGEvent (macOS), /dev/uinput (Linux) |
+| Aspect | Old (Streaming) | New (On-Demand) |
+|--------|----------------|-----------------|
+| **Data flow** | Continuous push | Request-response |
+| **Frequency** | 30fps always | On-demand |
+| **Agent complexity** | Handle stream | Simple call/response |
+| **Server complexity** | Stream management | Request handler |
+| **Resource usage** | Higher (always on) | Lower (idle when not called) |
+| **Latency** | <33ms per frame | ~50-100ms per call |
+| **Use case fit** | Real-time monitoring | Task-oriented agents |
 
 ---
 
-## File Structure
+## When Agent Requests
 
 ```
-OSCP/
-├── protocol/
-│   └── SPEC.md                    # Protocol format
-│
-├── platforms/
-│   ├── macos/
-│   │   ├── SPEC.md               # macOS approach
-│   │   ├── driver/               # AXUIElement wrapper + streaming
-│   │   └── input/                # CGEvent engine
-│   │
-│   └── linux/
-│       ├── SPEC.md               # Linux approach
-│       ├── driver/               # AT-SPI2 wrapper + streaming
-│       └── input/                # /dev/uinput engine
-│
-├── agents/
-│   └── SPEC.md                   # Agent SDK guidelines
-│
-└── README.md
+AGENT DECIDES WHEN TO CALL:
+
+1. Before a task
+   "Let me see what's on screen"
+   └── oscp.getFrame()
+
+2. After an action (verification)
+   "Did the dialog appear?"
+   └── oscp.getFrame()
+
+3. When uncertain
+   "I don't see the button I clicked"
+   └── oscp.getFrame()
+
+4. Periodic for long tasks
+   "Track progress of file save"
+   └── Periodic oscp.getFrame()
+
+Agent keeps state in memory. OSCP responds on-demand.
 ```
 
 ---
 
-## Complexity Summary
+## Speed Comparison
 
-| Platform | Wraps | OSCP Adds | Total Time |
-|----------|-------|-----------|------------|
-| **macOS** | AXUIElement (existing) | Streaming + Protocol + Fallbacks | 4-6 weeks |
-| **Linux** | AT-SPI2 + X11 (existing) | Streaming + Protocol + Fallbacks | 6-8 weeks |
+| Feature | Streaming (Old) | On-Demand (New) |
+|---------|----------------|-----------------|
+| Frame latency | <33ms | ~50-100ms |
+| Agent overhead | Constant stream processing | Call when needed |
+| Network | Continuous | Request-response |
+| Battery impact | Higher | Lower |
+| Suitability | Real-time games, fast UI | Task-oriented work |
+
+---
+
+## Fallback Hierarchy (Same)
+
+```
+LEVEL 1: Native Semantic Tree (90%)
+└── AXUIElement / AT-SPI2 / UIA
+
+LEVEL 2: CDP Bridge (Electron/Browser)
+└── Chrome DevTools Protocol
+
+LEVEL 3: Structural Heuristics
+└── Position-based inference
+
+LEVEL 4: Position-Only Mode
+└── Window bounds only
+
+LEVEL 5: Human Handoff
+└── Escalation for edge cases
+```
+
+---
+
+## Complexity Comparison
+
+| Component | Old (Streaming) | New (On-Demand) |
+|-----------|----------------|-----------------|
+| Server | Complex (stream management) | Simple (request handler) |
+| Client | Complex (stream consumer) | Simple (call/response) |
+| Protocol | Streaming frames | Request-response messages |
+| Implementation | 4-6 weeks | 3-4 weeks |
+
+**Reduced complexity = Faster to build.**
+
+---
+
+## macOS Architecture (Updated)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                 macOS Platform Driver                      │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │              REQUEST HANDLER                         │  │
+│  │                                                      │  │
+│  │   getFrame() ──► AXUIElement query ──► JSON response │
+│  │                                                      │  │
+│  │   onDemand:                                         │  │
+│  │   ├── Query focused app                              │  │
+│  │   ├── Get element hierarchy                          │  │
+│  │   ├── Extract bounds, names, states                  │  │
+│  │   └── Analyze coverage                               │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                              │                             │
+│  ┌───────────────────────────┼───────────────────────────┐ │
+│  │                    TREE ANALYZER                      │ │
+│  │   coverage_score, named_elements, confidence           │ │
+│  └───────────────────────────┬───────────────────────────┘ │
+│                              │                             │
+│                 ┌───────────┴───────────┐                  │
+│                 ▼                       ▼                  │
+│  ┌──────────────────────────┐  ┌──────────────────────────┐ │
+│  │   PRIMARY: AXUIElement  │  │   FALLBACKS:             │ │
+│  │   Coverage: 90%          │  │   • CDP Bridge           │ │
+│  │                          │  │   • Position-Only        │ │
+│  │                          │  │   • Human Handoff        │ │
+│  └──────────────────────────┘  └──────────────────────────┘ │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐ │
+│  │                INPUT ENGINE                          │ │
+│  │   click(), type(), key_combo() via CGEvent          │ │
+│  └──────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Linux Architecture (Updated)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                 Linux Platform Driver                       │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │              REQUEST HANDLER                         │  │
+│  │                                                      │  │
+│  │   onDemand:                                         │  │
+│  │   ├── Query at-spi-bus                               │  │
+│  │   ├── Get element hierarchy                          │  │
+│  │   ├── Fallback to X11 if needed                      │  │
+│  │   └── Analyze coverage                               │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                              │                             │
+│  ┌───────────────────────────┼───────────────────────────┐ │
+│  │                    TREE ANALYZER                      │ │
+│  │   coverage_score, named_elements, confidence           │ │
+│  └───────────────────────────┬───────────────────────────┘ │
+│                              │                             │
+│                 ┌───────────┴───────────┐                  │
+│                 ▼                       ▼                  │
+│  ┌──────────────────────────┐  ┌──────────────────────────┐ │
+│  │   PRIMARY: AT-SPI2        │  │   FALLBACKS:             │ │
+│  │   + X11 (fallback)       │  │   • CDP Bridge           │ │
+│  │   Coverage: 90%          │  │   • Heuristics           │ │
+│  │                          │  │   • Human Handoff        │ │
+│  └──────────────────────────┘  └──────────────────────────┘ │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐ │
+│  │                INPUT ENGINE                          │ │
+│  │   click(), type() via /dev/uinput                    │ │
+│  └──────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Agent SDK Example
+
+```python
+import oscp
+
+# Connect
+client = oscp.connect("unix:///tmp/oscp.sock")
+
+# Agent working on task:
+async def agent_task():
+    # Before action
+    frame = await client.getFrame()
+    
+    # Agent decides
+    save_button = frame.find(name="Save", type="button")
+    
+    # If found with high confidence
+    if save_button and save_button.confidence > 0.8:
+        await client.click(save_button.bounds)
+    
+    # After action, verify
+    new_frame = await client.getFrame()
+    if new_frame.tree.confidence == "HIGH":
+        # Continue
+    else:
+        # Fallback strategy
+```
+
+---
+
+## Revised Time Estimates
+
+| Component | Complexity | Time |
+|-----------|------------|------|
+| **Request handler** | Low | 1 week |
+| **API wrapping** | Low | 2 weeks |
+| **Fallback handling** | Low | 1 week |
+| **Input engine** | Low | 1 week |
+| **Testing** | Medium | 2 weeks |
+| **Total macOS** | | **4-5 weeks** |
+
+| Component | Complexity | Time |
+|-----------|------------|------|
+| **Request handler** | Medium | 1 week |
+| **AT-SPI2 wrapping** | Medium | 2 weeks |
+| **X11 fallback** | Low | 1 week |
+| **Fallback handling** | Low | 1 week |
+| **Input engine** | Medium | 2 weeks |
+| **Testing** | High | 2 weeks |
+| **Total Linux** | | **6-7 weeks** |
+
+**Total: 10-12 weeks (down from 12-16)**
 
 ---
 
 ## Status
 
-- [x] Architecture documented
-- [x] Existing tools identified
-- [x] OSCP layer defined
-- [x] Fallback hierarchy defined
-- [ ] Implementation begins
+- [x] Architecture updated (no streaming)
+- [x] Request-response model defined
+- [x] On-demand pattern documented
+- [ ] Implementation pending
+
+---
+
+## Summary
+
+```
+OSCP v0.4 = ON-DEMAND, NOT STREAMING
+
+- Agent requests when needed
+- OSCP responds immediately
+- Simpler architecture
+- Lower overhead
+- Faster to build
+- Still covers 85-90% of tasks
+```

@@ -1,13 +1,13 @@
 # OSCP Windows Platform Driver Specification
 
-**Version:** 0.3.0
-**Status:** Architecture Finalized
+**Version:** 0.4.0
+**Status:** Design Updated
 
 ---
 
 ## Overview
 
-The Windows platform driver wraps UIAutomation with a streaming layer.
+The Windows platform driver wraps UIAutomation and responds to on-demand requests.
 
 **Plan:** macOS first (simpler), then Linux, then Windows.
 
@@ -17,40 +17,35 @@ The Windows platform driver wraps UIAutomation with a streaming layer.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                 Platform Driver                             │
-│                                                             │
-│  ┌─────────────────┐  ┌──────────────────┐  ┌───────────┐ │
-│  │  STREAMING      │  │  ERROR HANDLER   │  │   INPUT   │ │
-│  │   ENGINE        │  │  + FALLBACKS     │  │  ENGINE   │ │
-│  │  (30fps)        │  │                  │  │           │ │
-│  └────────┬────────┘  └────────┬─────────┘  └─────┬─────┘ │
-│           │                    │                  │         │
-│           │             ┌──────▼──────┐          │         │
-│           │             │   TREE      │◄─────────┘         │
-│           │             │  ANALYZER   │                    │
-│           │             └──────┬──────┘                    │
-│           │                    │                          │
-│           │    ┌───────────────┴────────────┐            │
-│           │    │                            │            │
-│           │    ▼                            ▼            │
-│           │   ▼                              ▼           │
-│  ┌────────┴──────────────┐  ┌──────────────────────────┐ │
-│  │   PRIMARY CAPTURE      │  │    FALLBACK METHODS      │ │
-│  │                        │  │                          │ │
-│  │   UIAutomation         │  │    CDP Bridge             │ │
-│  │   ─────────────────    │  │    (Chrome/Edge/Electron) │ │
-│  │   Coverage: 85%        │  │                          │ │
-│  │                        │  │    Win32 EnumWindows      │ │
-│  │   Win32                │  │    (window list only)     │ │
-│  │   ─────────────        │  │                          │ │
-│  │   Coverage: +5%        │  │    Position-Only Mode      │ │
-│  │                        │  │                          │ │
-│  │                        │  │    Human Handoff          │ │
-│  └────────────────────────┘  └──────────────────────────┘ │
+│                 Windows Platform Driver                      │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │                 INPUT ENGINE                         │  │
-│  │  SendInput — click, type, key combos                 │  │
+│  │              REQUEST HANDLER                         │  │
+│  │                                                      │  │
+│  │   onDemand:                                         │  │
+│  │   ├── Query UIAutomation                            │  │
+│  │   ├── Handle errors                                 │  │
+│  │   └── Return frame JSON                             │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                             │                             │
+│  ┌──────────────────────────┼───────────────────────────┐ │
+│  │                    TREE ANALYZER                      │ │
+│  │   coverage_score, named_elements, confidence           │ │
+│  └──────────────────────────┴───────────────────────────┘ │
+│                             │                             │
+│                 ┌───────────┴───────────┐                  │
+│                 ▼                       ▼                  │
+│  ┌──────────────────────────┐  ┌──────────────────────────┐ │
+│  │   PRIMARY: UIA           │  │   FALLBACKS:             │ │
+│  │   Coverage: 85%          │  │   • CDP Bridge           │ │
+│  │                          │  │   • Win32 EnumWindows    │ │
+│  │   Win32 fallback         │  │   • Human Handoff        │ │
+│  │   Coverage: +5%          │  │                          │ │
+│  └──────────────────────────┘  └──────────────────────────┘ │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │                INPUT ENGINE                          │  │
+│  │   click(), type() via SendInput                      │  │
 │  └──────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -63,7 +58,7 @@ The Windows platform driver wraps UIAutomation with a streaming layer.
 
 ```
 EXISTING: UIAutomationCore (Windows COM API)
-WRAPPERS: pywinauto, native C#
+WRAPPERS: pywinauto, native C# / WinRT
 COVERAGE: 85%
 
 Provides:
@@ -71,8 +66,7 @@ Provides:
 ├── Element type (button, edit, etc.)
 ├── Position and size
 ├── Control patterns (Invoke, Value, etc.)
-├── Window and control enumeration
-└──HUIAutomation or IUIAutomation
+└── Window and control enumeration
 ```
 
 ### Win32 (Fallback)
@@ -80,12 +74,7 @@ Provides:
 ```
 EXISTING: Win32 API
 APIS: EnumWindows, GetWindowRect, GetWindowText
-COVERAGE: +5% (non-UIA apps)
-
-Provides:
-├── Window list
-├── Window positions and sizes
-└── Window titles
+COVERAGE: +5%
 ```
 
 ### SendInput (Input)
@@ -93,67 +82,15 @@ Provides:
 ```
 EXISTING: SendInput (user32.dll)
 USAGE: Input injection
-
-Provides:
-├── Mouse click/move/drag
-├── Keyboard input
-└── Key combinations
 ```
 
 ---
 
-## Fallback Hierarchy
+## Request-Response Model
 
-```
-LEVEL 1: UIAutomation (Primary)
-├── Win32 apps with UIA support
-├── WPF apps
-├── UWP apps
-└── Coverage: 85%
-
-LEVEL 2: CDP Bridge
-├── Chrome
-├── Edge
-├── Electron apps (VS Code, Slack)
-└── Coverage: +5%
-
-LEVEL 3: Win32 EnumWindows
-├── Legacy Win32 apps (no UIA)
-└── Coverage: +5%
-
-LEVEL 4: Position-Only Mode
-├── OpenGL apps
-├── Vulkan apps
-└── Works when tree is empty
-
-LEVEL 5: Human Handoff
-├── Protected content
-└── Unrecoverable cases
-```
-
----
-
-## System Requirements
-
-```
-REQUIRED:
-├── Windows 10 or Windows 11
-├── UIAutomation available
-└── Application running
-
-OPTIONAL:
-├── Chrome/Electron (for CDP bridge)
-└── Admin rights (for certain input operations)
-```
-
----
-
-## Installation
-
-```powershell
-winget install oscp
-# or
-choco install oscp
+Same as macOS/Linux:
+```python
+frame = await oscp.getFrame()
 ```
 
 ---
@@ -161,24 +98,25 @@ choco install oscp
 ## Time Estimate
 
 | Component | Complexity | Time |
-|-----------|-----------|------|
+|-----------|------------|------|
 | UIA wrapping | Medium | 2-3 weeks |
 | CDP bridge | Medium | 1-2 weeks |
-| Streaming engine | Medium | 2 weeks |
+| Request handler | Medium | 1 week |
 | Error handling | Low | 1 week |
 | SendInput | Low | 1 week |
 | Testing | Medium | 1-2 weeks |
-| **Total Windows Not Started** | | **6-8 weeks** |
-
----
-
-## Update Note
-
-This spec is documented for completeness. Windows implementation follows macOS and Linux.
+| **Total Windows** | | **6-7 weeks** |
 
 ---
 
 ## Status
 
-✅ Architecture documented
-⏸️ Implementation pending (macOS, Linux first)
+- [x] Architecture updated
+- [x] Request-response model defined
+- [ ] Implementation pending (macOS, Linux first)
+
+---
+
+## Update Note
+
+Windows implementation follows macOS and Linux. Start order: macOS → Linux → Windows.

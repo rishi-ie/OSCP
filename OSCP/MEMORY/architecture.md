@@ -3,53 +3,46 @@
 ## Pattern (All Platforms)
 
 ```
-AGENT HARNESS
-     │
-OSCP Protocol
-     │
-┌────────────────────────────────────────────────────────────┐
-│              OSCP PLATFORM DRIVER                          │
-│                                                            │
-│   ┌─────────────┐  ┌──────────────┐  ┌─────────────────┐ │
-│   │  STREAMING  │  │    ERROR     │  │      INPUT      │ │
-│   │   ENGINE    │  │   HANDLER    │  │     ENGINE      │ │
-│   └──────┬──────┘  └──────┬───────┘  └────────┬────────┘ │
-│          │                 │                    │           │
-│          │          ┌──────▼───────┐            │           │
-│          │          │    TREE      │◄──────────┘           │
-│          │          │   ANALYZER   │                         │
-│          │          └──────┬───────┘                         │
-│          │                 │                                 │
-│          │    ┌────────────┴────────────┐                   │
-│          │    │                         │                   │
-│          │    ▼                         ▼                   │
-│          │   ▼                           ▼                   │
-│   ┌──────┴──────────────────┐  ┌──────────────────────────┐│
-│   │   PRIMARY CAPTURE         │  │    FALLBACK METHODS       ││
-│   │   (AXUIElement/AT-SPI2)  │  │    (CDP/X11/Position)     ││
-│   └───────────────────────────┘  └──────────────────────────┘│
-└────────────────────────────────────────────────────────────┘
-     │
-Native OS APIs
+AGENT                                    OSCP SERVICE
+ │                                           │
+ │  oscp.getFrame() ─────────────────────────►│
+ │  (on-demand)                               ├─► Query OS APIs
+ │                                           ├─► Analyze tree
+ │  ◄────────────────────────────────────────│
+ │  { windows, elements, confidence }          │
+ │                                           │
+ │  oscp.click(bounds) ─────────────────────►│
+ │                                           ├─► Input injection
+ │  ◄────────────────────────────────────────│
+ │  { success: true }                        │
 ```
+
+## No Streaming = On-Demand
+
+| Aspect | Old (Streaming) | New (On-Demand) |
+|--------|----------------|-----------------|
+| **Pattern** | 30fps continuous | Request-response |
+| **Agent control** | Passive | Active |
+| **Resource usage** | Higher | Lower |
+| **Complexity** | Higher | Lower |
+| **Time to build** | 12-16 weeks | 10-12 weeks |
 
 ## macOS Architecture
 
 ```
-STREAMING ENGINE
-├── AXObserver (30fps)
-├── Watches AXUIElement changes
-└── Poll interval: 33ms
+REQUEST HANDLER (on-demand)
+├── oscp.getFrame() call
+├── AXUIElement query
+└── JSON response
 
 PRIMARY: AXUIElement
 ├── AppKit, SwiftUI
-├── Standard controls
 ├── Coverage: 90%
-└── EXISTING (wrappers: pyax, ax-element)
+└── EXISTING (pyax, ax-element)
 
 FALLBACKS:
 ├── CDP Bridge (Safari/Chrome/Electron)
-├── Position-Only Mode (Metal/OpenGL)
+├── Position-Only Mode
 └── Human Handoff
 
 INPUT: CGEvent
@@ -58,29 +51,27 @@ INPUT: CGEvent
 ## Linux Architecture
 
 ```
-STREAMING ENGINE
-├── AT-SPI2 Observer (D-Bus events)
-├── + Poll interval (fallback)
-└── ~30fps
+REQUEST HANDLER (on-demand)
+├── oscp.getFrame() call
+├── AT-SPI2 query + X11 fallback
+└── JSON response
 
 PRIMARY: AT-SPI2
 ├── GTK, Qt, Swing
-├── Standard controls
 ├── Coverage: 85%
-└── EXISTING (wrappers: dogtail, pyatspi, ldtp)
+└── EXISTING (dogtail, pyatspi)
 
-FALLBACKS:
-├── X11 (XQueryTree) — X11 + Xwayland
-├── CDP Bridge (Chrome/Firefox/Electron)
-├── Position-Only Mode
-└── Human Handoff
+X11 FALLBACK:
+├── XQueryTree
+├── X11 desktops + Xwayland apps
+└── Coverage: +5%
 
 INPUT: /dev/uinput
 ```
 
 ## OSCP Layer (Shared)
 
-- Protocol Server (Unix socket)
+- Request Handler (Unix socket)
 - Tree Builder (standardized format)
 - Error Handler (5-level fallback hierarchy)
 - Tree Analyzer (coverage_score, confidence)
@@ -88,20 +79,26 @@ INPUT: /dev/uinput
 ## Data Flow
 
 ```
-1. NATIVE CAPTURE (AXUIElement/AT-SPI2)
+1. AGENT REQUEST: oscp.getFrame()
    │
    ▼
-2. TREE BUILDER (OSCP layer)
+2. REQUEST HANDLER
    │
    ▼
-3. TREE ANALYZER
+3. NATIVE CAPTURE (AXUIElement/AT-SPI2)
    │
    ▼
-4. IF QUALITY < THRESHOLD: FALLBACK CHAIN
+4. TREE BUILDER (OSCP layer)
    │
    ▼
-5. PROTOCOL SERVER (JSON)
+5. TREE ANALYZER
    │
    ▼
-6. AGENT CLIENTS
+6. IF QUALITY < THRESHOLD: FALLBACK CHAIN
+   │
+   ▼
+7. PROTOCOL RESPONSE (JSON)
+   │
+   ▼
+8. AGENT CLIENT
 ```
