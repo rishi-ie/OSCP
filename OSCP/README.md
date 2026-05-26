@@ -38,29 +38,34 @@ AGENT                                    OSCP SERVICE
 ## Specs Complete
 
 ### Protocol Specification
-**File:** `protocol/SPEC.md`
-- All message types defined
-- Element models specified  
-- Error codes defined
-- **Status: Ready for implementation**
+**File:** `protocol/SPEC.md` (42KB)
+- Complete message types with JSON examples
+- Element reference (roles, states, sources)
+- Error codes with agent actions
+- State machine diagram
+- **Python SDK** (full implementation)
+- **Swift SDK** (full implementation)
+- Connection examples (C, Swift, Python, TypeScript)
 
 ### macOS Platform Spec
-**File:** `platforms/macos/SPEC.md`
-- AXUIElement integration details
-- CGEvent input engine
-- CDP bridge implementation
-- **Time: 4-5 weeks**
+**File:** `platforms/macos/SPEC.md` (145KB)
+- **Complete Models:** Element, Window, Frame, Action, Errors
+- **AXUIElement Capture:** Full Swift implementation
+- **CDP Bridge:** Complete Swift implementation
+- **Tree Builder:** Full implementation
+- **Tree Analyzer:** Full implementation
+- **Fallback Manager:** Complete 5-level fallback
+- **CGEvent Input Engine:** Full implementation
+- **Protocol Server:** Complete Unix socket server
+- **Main Entry Point:** Ready-to-run main.swift
+- **Testing Templates:** Unit test examples
+- **Common Pitfalls:** Troubleshooting guide
 
 ### Linux Platform Spec
-**File:** `platforms/linux/SPEC.md`
+**File:** `platforms/linux/SPEC.md` (31KB)
 - AT-SPI2 integration details
 - X11 fallback implementation
 - /dev/uinput input engine
-- **Time: 6-7 weeks**
-
-### Windows Platform
-**File:** `platforms/windows/SPEC.md`
-- **Deferred until after macOS/Linux**
 
 ---
 
@@ -68,7 +73,7 @@ AGENT                                    OSCP SERVICE
 
 | Platform | Wraps | Coverage |
 |----------|-------|----------|
-| **macOS** | AXUIElement | 95% |
+| **macOS** | AXUIElement + CDP | 95% |
 | **Linux** | AT-SPI2 + X11 | 90-95% |
 
 ---
@@ -94,7 +99,7 @@ LEVEL 5: Human Handoff
 
 ---
 
-## Agent SDK Example
+## Protocol Example
 
 ```python
 import oscp
@@ -137,13 +142,14 @@ WEEK 13+:    macOS + Linux polish + testing
 ```
 OSCP/
 ├── SPEC.md                      # This file
+├── README.md                    # Project overview
 ├── protocol/
-│   └── SPEC.md                 # Protocol specification
+│   └── SPEC.md                 # Protocol + SDK examples
 ├── platforms/
 │   ├── macos/
-│   │   └── SPEC.md             # macOS implementation
+│   │   └── SPEC.md             # Full implementation spec
 │   ├── linux/
-│   │   └── SPEC.md             # Linux implementation
+│   │   └── SPEC.md             # Linux implementation spec
 │   └── windows/
 │       └── SPEC.md             # Deferred
 ├── agents/
@@ -155,8 +161,8 @@ OSCP/
 
 ## Status
 
-- [x] Protocol specification complete
-- [x] macOS platform detailed spec complete
+- [x] Protocol specification complete (with Python/Swift SDKs)
+- [x] macOS platform detailed spec complete (full code)
 - [x] Linux platform detailed spec complete
 - [ ] macOS implementation pending
 - [ ] Linux implementation pending
