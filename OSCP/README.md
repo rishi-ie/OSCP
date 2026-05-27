@@ -26,7 +26,7 @@ That's it. The agent decides what to do with it.
 
 ---
 
-## How It Works
+## Architecture
 
 ```
 CLI AGENT                           OSCP (MCP Server)
@@ -149,7 +149,6 @@ Every element includes:
 | `bounds` | `{"x": 100, "y": 50, "width": 80, "height": 25}` |
 | `enabled` | `true` / `false` |
 | `focused` | `true` / `false` |
-| `children` | Nested elements |
 
 ### Supported Roles
 
@@ -223,16 +222,6 @@ Agent can then use a VLM externally to analyze.
 
 ---
 
-## Platform Support
-
-| Platform | Status | API |
-|----------|--------|-----|
-| **macOS** | ✅ | AXUIElement |
-| **Linux** | ✅ | AT-SPI2 |
-| **Windows** | ✅ | UIAutomation |
-
----
-
 ## CLI Agent Integration
 
 Add to your MCP config:
@@ -262,9 +251,11 @@ OSCP/
 │   └── SPEC.md                 # MCP protocol + element format
 ├── platforms/
 │   ├── macos/SPEC.md           # macOS implementation
-│   ├── linux/SPEC.md            # Linux implementation
-│   └── windows/SPEC.md          # Windows implementation
-└── agents/SPEC.md             # Agent integration guide
+│   ├── linux/SPEC.md          # Linux implementation
+│   └── windows/SPEC.md        # Windows implementation
+├── agents/
+│   └── SPEC.md                 # Agent integration guide
+└── MEMORY/                    # Project context
 ```
 
 ---
@@ -283,9 +274,7 @@ OSCP/
 ## Status
 
 - [x] Protocol specification complete
-- [x] macOS detailed spec complete
-- [x] Linux detailed spec complete
-- [x] Windows detailed spec complete
+- [x] Platform specs complete
 - [ ] Implementation pending
 
 ---

@@ -19,7 +19,7 @@ OSCP is an MCP server that gives CLI agents the ability to see desktop applicati
 
 - CLI agent integration via Model Context Protocol
 - Single binary, runs as `--mcp`
-- No HTTP, no socket server—just MCP
+- No HTTP, no socket server
 
 ### 2. Native Tree Capture
 
@@ -71,15 +71,26 @@ OSCP is an MCP server that gives CLI agents the ability to see desktop applicati
 ## Capture Pipeline
 
 ```
-1. Native API (AXUIElement/AT-SPI2/UIA)
-   └── 90% coverage
-
-2. CDP DOM Bridge
-   └── Browsers, Electron
-
-3. Screenshot
-   └── Games, custom renderers
+1. Native API (AXUIElement/AT-SPI2/UIA) — 90% coverage
+2. CDP DOM Bridge — Browsers, Electron
+3. Screenshot — Games, custom renderers
 ```
+
+---
+
+## Supported Element Roles
+
+- `window`, `dialog`, `alert`
+- `button`, `check_box`, `radio_button`
+- `text_field`, `text_area`, `secure_field`
+- `combo_box`, `drop_down`
+- `menu`, `menu_bar`, `menu_item`
+- `tab`, `tab_group`
+- `list`, `list_item`
+- `table`, `row`, `cell`
+- `tool_bar`, `group`
+- `link`, `image`, `icon`
+- `static_text`, `label`
 
 ---
 

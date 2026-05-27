@@ -10,34 +10,93 @@ OSCP captures the tree. Agent handles interaction.
 | Native tree capture | Interaction layer |
 | CDP fallback | Unix socket |
 | Screenshot fallback | Dashboard |
+| Unified element format | Confidence scoring |
+| | Human handoff |
+| | Recorder |
+
+**Rationale:** Keep OSCP simple. Agent uses Python packages for interaction. Agent provides meaning.
+
+---
 
 ## Transport: MCP Only
 
-CLI agents use MCP. Single binary, `--mcp` flag.
+- CLI agents use MCP
+- Single binary, runs as `--mcp`
+- No HTTP server
+- No Unix socket
+
+**Rationale:** MCP is the standard for CLI agent integration.
+
+---
 
 ## No Interaction Layer
 
-Agent uses Python/macOS automation packages for clicks/keyboard.
+OSCP does not:
+- Click buttons
+- Type text
+- Scroll
+- Drag and drop
+
+Agent handles all of this via its own tools (Python automation, pyautogui, etc.)
+
+**Rationale:** OSCP stays focused on discovery. Interaction is a separate concern handled by the agent.
+
+---
 
 ## No Quality Scoring
 
-Agent provides meaning. That's the point.
+OSCP does not:
+- Calculate confidence scores
+- Recommend actions
+- Suggest fallbacks
 
-## No Human Handoff
+Agent interprets the tree and decides what to do.
 
-Agent handles edge cases via its own logic.
+**Rationale:** Agent provides meaning. OSCP just provides the data.
 
-## CDP Bridge
+---
 
-For browsers and Electron apps when native API fails.
+## CDP Bridge as Fallback
 
-## Screenshot Fallback
+When native APIs can't see browser content (Safari, Chrome, Electron), OSCP connects to CDP endpoint.
 
-For games and custom renderers when everything else fails.
+**Covers:** Web content, DOM elements, browser apps
+
+**Rationale:** Native APIs don't expose browser DOM. CDP bridges this gap.
+
+---
+
+## Screenshot as Last Resort
+
+When everything else fails (games, custom renderers, DRM), OSCP returns a screenshot.
+
+Agent can then use VLM externally to analyze.
+
+**Rationale:** Some apps have zero accessibility API. Screenshot is the universal fallback.
+
+---
 
 ## Platform Order
 
-macOS first (AXUIElement most stable), then Linux, then Windows.
+1. **macOS** — 3-4 weeks (AXUIElement most stable)
+2. **Linux** — 4-5 weeks (AT-SPI2 + X11 fallback)
+3. **Windows** — 4-5 weeks (UIAutomation)
+
+**Rationale:** macOS has the most stable, well-documented accessibility API.
+
+---
+
+## Implementation Stack
+
+| Component | Technology |
+|-----------|------------|
+| MCP Server | Rust or Swift |
+| macOS | AXUIElement (C API) |
+| Linux | AT-SPI2 (D-Bus) |
+| Windows | UIAutomation (COM) |
+| CDP Bridge | WebSocket + CDP protocol |
+
+---
 
 ## Time Estimates
 
@@ -48,13 +107,38 @@ macOS first (AXUIElement most stable), then Linux, then Windows.
 | Windows | 4-5 weeks |
 | **Total** | **11-14 weeks** |
 
+---
+
+## Why Not OculOS?
+
+OculOS is a similar project (also Rust, also accessibility APIs). OSCP differs in:
+
+| Aspect | OculOS | OSCP |
+|--------|--------|------|
+| Transport | HTTP + MCP | MCP only |
+| Scope | Discovery + Interaction | Discovery only |
+| Confidence | No | No |
+| CDP Bridge | No | Yes |
+| Screenshot | Yes | Yes |
+
+OSCP is simpler, focused, and adds CDP bridge for better browser coverage.
+
+---
+
 ## Rejected Approaches
 
 ### Screenshot + VLM as Primary
 - Slow (~1-2s/frame)
-- Expensive
-- Probabilistic
+- Expensive (API costs)
+- Probabilistic (VLM can be wrong)
+- Unnecessary for 90% of apps
+
+### HTTP REST as Primary
+- Extra dependency for CLI agents
+- MCP is the standard for CLI agents
+- Keep it simple
 
 ### Interaction Layer
 - Agent handles via Python packages
-- Keep OSCP simple
+- Keeps OSCP focused
+- Separation of concerns

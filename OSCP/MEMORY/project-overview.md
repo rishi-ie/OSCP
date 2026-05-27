@@ -9,6 +9,12 @@ OSCP is an MCP server that gives CLI agents eyes. It captures the OS accessibili
 
 ---
 
+## Vision
+
+> Give CLI agents eyes. See any desktop app without screenshots.
+
+---
+
 ## Scope
 
 **Only discovery. Agent handles interaction.**
@@ -67,6 +73,22 @@ OSCP is an MCP server that gives CLI agents eyes. It captures the OS accessibili
 
 ---
 
+## Supported Element Roles
+
+- `window`, `dialog`, `alert`
+- `button`, `check_box`, `radio_button`
+- `text_field`, `text_area`, `secure_field`
+- `combo_box`, `drop_down`
+- `menu`, `menu_bar`, `menu_item`
+- `tab`, `tab_group`
+- `list`, `list_item`
+- `table`, `row`, `cell`
+- `tool_bar`, `group`
+- `link`, `image`, `icon`
+- `static_text`, `label`
+
+---
+
 ## Spec Status
 
 | Spec | Status |
@@ -89,6 +111,26 @@ OSCP is an MCP server that gives CLI agents eyes. It captures the OS accessibili
 
 ---
 
+## Directory Structure
+
+```
+OSCP/
+├── README.md                    # Project overview
+├── SPEC.md                     # Architecture summary
+├── protocol/
+│   └── SPEC.md                 # MCP protocol + element format
+├── platforms/
+│   ├── macos/SPEC.md           # macOS implementation
+│   ├── linux/SPEC.md           # Linux implementation
+│   └── windows/SPEC.md        # Windows implementation
+├── agents/
+│   └── SPEC.md                 # Agent integration guide
+└── MEMORY/                    # Project context
+```
+
+---
+
 ## References
 
 - GitHub: github.com/rishi-ie/OSCP
+- MCP Protocol: modelcontextprotocol.io
