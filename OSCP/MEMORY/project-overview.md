@@ -2,120 +2,90 @@
 
 ## What OSCP Is
 
-OSCP (Operating System Context Protocol) enables AI agents to see and interact with desktop applications using native OS accessibility APIs—no screenshots, no VLM required.
+OSCP is an MCP server that gives CLI agents eyes. It captures the OS accessibility tree—no screenshots, no VLM—and exposes it via MCP.
 
-**Version:** 0.4.0
+**Version:** 0.5.0
 **Status:** Specs Complete. Ready for Implementation.
 
 ---
 
-## Core Capabilities
+## Scope
 
-### 1. On-Demand Screen Capture
+**Only discovery. Agent handles interaction.**
 
-- Request screen state when needed (not streaming)
-- Returns all visible windows with titles, bounds, focus state
-- Returns every UI element with names, roles, positions, values
-- Reports per-element and per-frame confidence scores
-- Reports current mouse position and hovered element
+| Included | Excluded |
+|----------|----------|
+| MCP server | HTTP REST |
+| Native tree capture | Interaction layer |
+| CDP fallback | Unix socket |
+| Screenshot fallback | Dashboard |
+| Unified element format | Recorder |
 
-### 2. Native OS Integration
+---
 
-| Platform | Primary API | Coverage |
-|----------|-------------|----------|
-| macOS | AXUIElement | 95% |
-| Linux | AT-SPI2 + X11 | 90-95% |
-| Windows | UIAutomation | 85% |
+## Capture Pipeline
 
-### 3. Supported Element Types
+```
+1. Native API (AXUIElement/AT-SPI2/UIA) — 90% coverage
+2. CDP DOM Bridge — Browsers, Electron
+3. Screenshot — Games, custom renderers
+```
 
-All standard desktop UI elements:
-- Buttons, checkboxes, radio buttons
-- Text fields, text areas, secure fields
-- Combo boxes, dropdowns, sliders
-- Menus, menu bars, menu items
-- Tabs, tab groups, panels
-- Lists, list items, tables, cells
-- Links, images, icons
-- Windows, dialogs, alerts, sheets
-- Groups, toolbars, scroll areas
+---
 
-### 4. Action Execution
+## MCP Tools
 
-**Mouse:** click (single/double/triple/right), drag, move, scroll
+| Tool | Description |
+|------|-------------|
+| `list_windows` | All visible windows |
+| `get_tree` | Full element tree for a window |
+| `find_elements` | Search by name/type |
 
-**Keyboard:** type text, key combinations (Ctrl+S, Cmd+S, etc.)
+---
 
-### 5. Quality Scoring
+## Element Format
 
-- Per-frame coverage analysis (named area / window area)
-- Confidence levels: HIGH (>80%), MEDIUM (50-80%), LOW (30-50%), NONE (<30%)
-- Per-element confidence based on name, role, size, source
+```json
+{
+  "id": "e_001",
+  "role": "button",
+  "name": "Save",
+  "bounds": {"x": 100, "y": 50, "width": 80, "height": 25},
+  "enabled": true
+}
+```
 
-### 6. Intelligent Fallbacks
+---
 
-5-level fallback chain when native APIs fail:
-1. Native semantic tree (90% coverage)
-2. CDP bridge (Safari/Chrome/Electron)
-3. Structural heuristics (position inference)
-4. Position-only mode
-5. Human handoff
+## Platform Coverage
 
-### 7. Error Handling
-
-Actionable errors with alternatives:
-- ELEMENT_NOT_FOUND, ELEMENT_DISABLED, ELEMENT_MOVED
-- ACTION_FAILED (with alternative positions)
-- EMPTY_TREE, LOW_COVERAGE
-- Human handoff escalation
-
-### 8. Human-Informed Learning
-
-- Agents can learn from human interventions
-- Record positions for future reference
-- Graceful escalation when stuck
+| Platform | API | Coverage |
+|----------|-----|----------|
+| macOS | AXUIElement | 90% |
+| Linux | AT-SPI2 | 85% |
+| Windows | UIAutomation | 90% |
 
 ---
 
 ## Spec Status
 
-| Spec | Status | Size |
-|------|--------|------|
-| Protocol | ✅ Complete | 44KB |
-| macOS | ✅ Complete | 145KB |
-| Linux | ✅ Complete | 31KB |
-| Windows | ⏸️ Deferred | - |
+| Spec | Status |
+|------|--------|
+| Protocol | ✅ Complete |
+| macOS | ✅ Complete |
+| Linux | ✅ Complete |
+| Windows | ✅ Complete |
 
 ---
 
-## Implementation Stack
-
-### macOS
-- Swift/Objective-C
-- AXUIElement for capture
-- CGEvent for input
-- Unix socket protocol server
-
-### Linux
-- Python (pyatspi) or Rust
-- AT-SPI2 + X11 for capture
-- /dev/uinput + XTest for input
-
----
-
-## Time Estimates
+## Implementation Timeline
 
 | Platform | Time |
 |----------|------|
-| macOS | 4-5 weeks |
-| Linux | 6-7 weeks |
-| **Total** | **10-12 weeks** |
-
----
-
-## Key Principle
-
-> "Wrap existing tools. Respond on-demand. Handle errors gracefully. Agent provides meaning."
+| macOS | 3-4 weeks |
+| Linux | 4-5 weeks |
+| Windows | 4-5 weeks |
+| **Total** | **11-14 weeks** |
 
 ---
 

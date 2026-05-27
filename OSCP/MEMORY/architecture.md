@@ -2,33 +2,31 @@
 
 ## Overview
 
-OSCP is a wrapper + on-demand layer on top of existing OS accessibility APIs.
+OSCP = MCP Server + Tree Capture + CDP Bridge + Screenshot Fallback
 
 ## Components
 
-### Protocol Layer
-- Unix socket server (macOS/Linux)
-- JSON over newline-delimited messages
-- Request-response pattern (no streaming)
+### MCP Server
+- CLI agent integration
+- Runs as `--mcp` binary
+- No HTTP, no socket
 
-### Capture Layer
-- Platform-specific accessibility API wrapper
-- macOS: AXUIElement
-- Linux: AT-SPI2 + X11 fallback
+### Discovery Layer
+- Native accessibility (AXUIElement/AT-SPI2/UIA)
+- CDP DOM bridge (browsers)
+- Screenshot fallback (games)
 
-### Analysis Layer
-- Tree builder (flatten, search, lookup)
-- Tree analyzer (coverage, confidence)
-- Fallback manager (5-level chain)
+### Element Registry
+- UUID-based element IDs
+- Unified element format
 
-### Input Layer
-- Platform-specific input injection
-- macOS: CGEvent
-- Linux: /dev/uinput + XTest
+## Capture Pipeline
 
-### Bridge Layer (Fallback)
-- CDP bridge for browsers
-- Safari, Chrome, Electron apps
+```
+1. Native API (90%)
+2. CDP DOM Bridge (browsers)
+3. Screenshot (games)
+```
 
 ## Spec Status
 
@@ -37,12 +35,13 @@ OSCP is a wrapper + on-demand layer on top of existing OS accessibility APIs.
 | Protocol | ✅ Complete |
 | macOS | ✅ Complete |
 | Linux | ✅ Complete |
-| Windows | ⏸️ Deferred |
+| Windows | ✅ Complete |
 
 ## Time Estimates
 
 | Platform | Time |
 |----------|------|
-| macOS | 4-5 weeks |
-| Linux | 6-7 weeks |
-| Total | 10-12 weeks |
+| macOS | 3-4 weeks |
+| Linux | 4-5 weeks |
+| Windows | 4-5 weeks |
+| Total | 11-14 weeks |
