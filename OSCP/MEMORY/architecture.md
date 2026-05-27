@@ -1,108 +1,34 @@
 # OSCP Architecture
 
-## Pattern (All Platforms)
+## Overview
 
-```
-AGENT                                    OSCP SERVICE
- │                                           │
- │  oscp.getFrame() ─────────────────────────►│
- │  (on-demand)                               ├─► Query OS APIs
- │                                           ├─► Fallback chain
- │                                           ├─► Tree analysis
- │  ◄────────────────────────────────────────│
- │  { windows, elements, confidence }          │
- │                                           │
- │  oscp.click(bounds) ─────────────────────►│
- │                                           ├─► Input injection
- │  ◄────────────────────────────────────────│
- │  { success: true }                        │
-```
+OSCP is a wrapper + on-demand layer on top of existing OS accessibility APIs.
 
-## On-Demand vs Streaming
+## Components
 
-| Aspect | Old (Streaming) | New (On-Demand) |
-|--------|----------------|-----------------|
-| **Pattern** | 30fps continuous | Request-response |
-| **Agent control** | Passive | Active |
-| **Resource usage** | Higher | Lower |
-| **Complexity** | Higher | Lower |
-| **Time to build** | 12-16 weeks | 10-12 weeks |
+### Protocol Layer
+- Unix socket server (macOS/Linux)
+- JSON over newline-delimited messages
+- Request-response pattern (no streaming)
 
-## macOS Architecture
+### Capture Layer
+- Platform-specific accessibility API wrapper
+- macOS: AXUIElement
+- Linux: AT-SPI2 + X11 fallback
 
-```
-REQUEST HANDLER (on-demand)
-├── oscp.getFrame() call
-├── AXUIElement query
-├── CDP bridge (fallback)
-└── JSON response
+### Analysis Layer
+- Tree builder (flatten, search, lookup)
+- Tree analyzer (coverage, confidence)
+- Fallback manager (5-level chain)
 
-PRIMARY: AXUIElement
-├── AppKit, SwiftUI
-├── Coverage: 90%
-└── IMPLEMENTED: Swift/Obj-C + C bridging
+### Input Layer
+- Platform-specific input injection
+- macOS: CGEvent
+- Linux: /dev/uinput + XTest
 
-FALLBACKS:
-├── CDP Bridge (Safari/Chrome/Electron)
-├── Position-Only Mode
-└── Human Handoff
-
-INPUT: CGEvent
-```
-
-## Linux Architecture
-
-```
-REQUEST HANDLER (on-demand)
-├── oscp.getFrame() call
-├── AT-SPI2 query
-├── X11 fallback
-├── CDP bridge (fallback)
-└── JSON response
-
-PRIMARY: AT-SPI2
-├── GTK, Qt, Swing
-├── Coverage: 85%
-└── IMPLEMENTED: Python (pyatspi) or Rust
-
-X11 FALLBACK:
-├── XQueryTree
-├── X11 desktops + Xwayland apps
-└── Coverage: +5%
-
-INPUT: /dev/uinput (primary) / XTest (fallback)
-```
-
-## OSCP Layer (Shared)
-
-- Request Handler (Unix socket)
-- Tree Builder (standardized format)
-- Error Handler (5-level fallback hierarchy)
-- Tree Analyzer (coverage_score, confidence)
-
-## Data Flow
-
-```
-1. AGENT REQUEST: oscp.getFrame()
-   │
-   ▼
-2. REQUEST HANDLER
-   │
-   ▼
-3. NATIVE CAPTURE (AXUIElement/AT-SPI2)
-   │
-   ▼
-4. FALLBACK CHAIN (if needed)
-   │
-   ▼
-5. TREE BUILDER + ANALYZER
-   │
-   ▼
-6. PROTOCOL RESPONSE (JSON)
-   │
-   ▼
-7. AGENT CLIENT
-```
+### Bridge Layer (Fallback)
+- CDP bridge for browsers
+- Safari, Chrome, Electron apps
 
 ## Spec Status
 

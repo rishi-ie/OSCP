@@ -1,105 +1,107 @@
-# OSCP - Memory
+# OSCP - Project Overview
 
-## Project Overview
+## What OSCP Is
 
-OSCP (Operating System Context Protocol) is a foundational protocol for agent-native OS interaction. It is a **wrapper + on-demand layer** on top of existing OS accessibility APIs.
+OSCP (Operating System Context Protocol) enables AI agents to see and interact with desktop applications using native OS accessibility APIs—no screenshots, no VLM required.
 
 **Version:** 0.4.0
-**Status:** Specs complete. Ready for implementation.
+**Status:** Specs Complete. Ready for Implementation.
 
-**Principle:** "Wrap existing tools. Respond on-demand. Handle errors gracefully. Agent provides meaning."
+---
 
-## Repository Structure
+## Core Capabilities
 
-```
-OSCP/
-├── README                     # Project overview
-├── SPEC.md                    # Architecture summary
-│
-├── protocol/
-│   └── SPEC.md                # Protocol specification (ready for impl)
-│
-├── platforms/
-│   ├── macos/
-│   │   └── SPEC.md            # macOS implementation spec (ready for impl)
-│   ├── linux/
-│   │   └── SPEC.md            # Linux implementation spec (ready for impl)
-│   └── windows/
-│       └── SPEC.md            # Deferred
-│
-├── agents/
-│   └── SPEC.md                # Agent SDK guidelines
-│
-├── MEMORY/                    # Project context for AI agents
-│   ├── architecture.md        # Architecture diagrams
-│   ├── DECISIONS.md          # Key decisions
-│   └── project-overview.md   # This file
-│
-└── docs/
-```
+### 1. On-Demand Screen Capture
 
-## How OSCP Works
+- Request screen state when needed (not streaming)
+- Returns all visible windows with titles, bounds, focus state
+- Returns every UI element with names, roles, positions, values
+- Reports per-element and per-frame confidence scores
+- Reports current mouse position and hovered element
 
-```
-AGENT                                     OSCP SERVICE
- │                                           │
- │  oscp.getFrame() ─────────────────────────►│
- │  (on-demand)                              ├─► Query OS APIs
- │                                           ├─► Fallback chain
- │  ◄────────────────────────────────────────│
- │  { windows, elements, confidence }          │
-```
+### 2. Native OS Integration
+
+| Platform | Primary API | Coverage |
+|----------|-------------|----------|
+| macOS | AXUIElement | 95% |
+| Linux | AT-SPI2 + X11 | 90-95% |
+| Windows | UIAutomation | 85% |
+
+### 3. Supported Element Types
+
+All standard desktop UI elements:
+- Buttons, checkboxes, radio buttons
+- Text fields, text areas, secure fields
+- Combo boxes, dropdowns, sliders
+- Menus, menu bars, menu items
+- Tabs, tab groups, panels
+- Lists, list items, tables, cells
+- Links, images, icons
+- Windows, dialogs, alerts, sheets
+- Groups, toolbars, scroll areas
+
+### 4. Action Execution
+
+**Mouse:** click (single/double/triple/right), drag, move, scroll
+
+**Keyboard:** type text, key combinations (Ctrl+S, Cmd+S, etc.)
+
+### 5. Quality Scoring
+
+- Per-frame coverage analysis (named area / window area)
+- Confidence levels: HIGH (>80%), MEDIUM (50-80%), LOW (30-50%), NONE (<30%)
+- Per-element confidence based on name, role, size, source
+
+### 6. Intelligent Fallbacks
+
+5-level fallback chain when native APIs fail:
+1. Native semantic tree (90% coverage)
+2. CDP bridge (Safari/Chrome/Electron)
+3. Structural heuristics (position inference)
+4. Position-only mode
+5. Human handoff
+
+### 7. Error Handling
+
+Actionable errors with alternatives:
+- ELEMENT_NOT_FOUND, ELEMENT_DISABLED, ELEMENT_MOVED
+- ACTION_FAILED (with alternative positions)
+- EMPTY_TREE, LOW_COVERAGE
+- Human handoff escalation
+
+### 8. Human-Informed Learning
+
+- Agents can learn from human interventions
+- Record positions for future reference
+- Graceful escalation when stuck
+
+---
 
 ## Spec Status
 
-| Spec | Status | Ready for Impl? |
-|------|--------|----------------|
-| **Protocol** | ✅ Complete | Yes |
-| **macOS** | ✅ Complete | Yes |
-| **Linux** | ✅ Complete | Yes |
-| **Windows** | ⏸️ Deferred | No |
+| Spec | Status | Size |
+|------|--------|------|
+| Protocol | ✅ Complete | 44KB |
+| macOS | ✅ Complete | 145KB |
+| Linux | ✅ Complete | 31KB |
+| Windows | ⏸️ Deferred | - |
+
+---
 
 ## Implementation Stack
 
 ### macOS
-- **API:** AXUIElement (native C API)
-- **Language:** Swift/Objective-C + C bridging
-- **Input:** CGEvent
-- **Time:** 4-5 weeks
+- Swift/Objective-C
+- AXUIElement for capture
+- CGEvent for input
+- Unix socket protocol server
 
 ### Linux
-- **API:** AT-SPI2 (D-Bus) + X11 (fallback)
-- **Language:** Python (pyatspi) or Rust
-- **Input:** /dev/uinput + XTest fallback
-- **Time:** 6-7 weeks
+- Python (pyatspi) or Rust
+- AT-SPI2 + X11 for capture
+- /dev/uinput + XTest for input
 
-## Fallback Hierarchy
-
-```
-LEVEL 1: Native Semantic Tree (90%)
-   └── AXUIElement / AT-SPI2
-
-LEVEL 2: CDP Bridge (Browser/Electron)
-   └── Chrome DevTools Protocol
-
-LEVEL 3: Structural Heuristics
-   └── Position-based inference
-
-LEVEL 4: Position-Only Mode
-   └── Agent explores
-
-LEVEL 5: Human Handoff
-   └── Graceful degradation
-```
-
-## Confidence Decision Table
-
-| Confidence | Threshold | Agent Action |
-|------------|-----------|--------------|
-| **HIGH** | > 0.8 | Execute immediately |
-| **MEDIUM** | 0.5-0.8 | Execute with monitoring |
-| **LOW** | 0.3-0.5 | Explore candidates first |
-| **NONE** | < 0.2 | Human handoff |
+---
 
 ## Time Estimates
 
@@ -107,7 +109,15 @@ LEVEL 5: Human Handoff
 |----------|------|
 | macOS | 4-5 weeks |
 | Linux | 6-7 weeks |
-| Total (macOS + Linux) | 10-12 weeks |
+| **Total** | **10-12 weeks** |
+
+---
+
+## Key Principle
+
+> "Wrap existing tools. Respond on-demand. Handle errors gracefully. Agent provides meaning."
+
+---
 
 ## References
 

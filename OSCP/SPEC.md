@@ -5,172 +5,102 @@
 
 ---
 
-## Overview
+## What OSCP Is
 
-OSCP is a **wrapper + on-demand layer** on top of existing OS accessibility APIs. Agent requests screen state when needed; OSCP responds with semantic tree.
-
-## Repository Structure
-
-```
-OSCP/
-├── README.md                    # Project overview
-├── SPEC.md                     # This file
-│
-├── protocol/
-│   └── SPEC.md                 # Complete protocol specification
-│                                 (with SDK examples: Python, Swift)
-│
-├── platforms/
-│   ├── macos/
-│   │   └── SPEC.md             # Complete macOS implementation
-│   │                             (every component: Models, Capture,
-│   │                              Input, Server, with full code)
-│   ├── linux/
-│   │   └── SPEC.md             # Detailed Linux implementation
-│   └── windows/
-│       └── SPEC.md             # Deferred
-│
-├── agents/
-│   └── SPEC.md                 # Agent SDK guidelines
-│
-├── MEMORY/
-│   ├── architecture.md
-│   ├── DECISIONS.md
-│   └── project-overview.md
-│
-└── docs/
-```
+OSCP (Operating System Context Protocol) enables AI agents to see and interact with desktop applications using native OS accessibility APIs—no screenshots, no VLM required.
 
 ---
 
-## Architecture
+## Core Capabilities
 
-```
-AGENT                                    OSCP SERVICE
- │                                           │
- │  oscp.getFrame() ─────────────────────────►│
- │  (on-demand)                               ├─► Query OS APIs
- │                                           ├─► Fallback chain
- │                                           ├─► Tree analysis
- │  ◄────────────────────────────────────────│
- │  { windows, elements, confidence }          │
-```
+### 1. On-Demand Screen Capture
 
----
+| Data | Description |
+|------|-------------|
+| Windows | Titles, bounds, focus state, owning app |
+| Elements | Names, roles, positions, values |
+| Quality | Confidence scores, coverage metrics |
+| Mouse | Current position, hovered element |
 
-## Specs Complete
+### 2. Native OS Integration
 
-### Protocol Specification
-**File:** `protocol/SPEC.md` (42KB)
-- Complete message types with JSON examples
-- Element reference (roles, states, sources)
-- Error codes with agent actions
-- State machine diagram
-- **Python SDK** (full implementation)
-- **Swift SDK** (full implementation)
-- Connection examples (C, Swift, Python, TypeScript)
+| Platform | API | Coverage |
+|----------|-----|----------|
+| macOS | AXUIElement | 95% |
+| Linux | AT-SPI2 + X11 | 90-95% |
+| Windows | UIAutomation | 85% |
 
-### macOS Platform Spec
-**File:** `platforms/macos/SPEC.md` (145KB)
-- **Complete Models:** Element, Window, Frame, Action, Errors
-- **AXUIElement Capture:** Full Swift implementation
-- **CDP Bridge:** Complete Swift implementation
-- **Tree Builder:** Full implementation
-- **Tree Analyzer:** Full implementation
-- **Fallback Manager:** Complete 5-level fallback
-- **CGEvent Input Engine:** Full implementation
-- **Protocol Server:** Complete Unix socket server
-- **Main Entry Point:** Ready-to-run main.swift
-- **Testing Templates:** Unit test examples
-- **Common Pitfalls:** Troubleshooting guide
+### 3. Supported Element Types
 
-### Linux Platform Spec
-**File:** `platforms/linux/SPEC.md` (31KB)
-- AT-SPI2 integration details
-- X11 fallback implementation
-- /dev/uinput input engine
-- **Time: 6-7 weeks**
+- Buttons, checkboxes, radio buttons
+- Text fields, text areas, secure fields
+- Combo boxes, dropdowns, sliders
+- Menus, menu bars, menu items
+- Tabs, tab groups, panels
+- Lists, tables, cells
+- Links, images, icons
+- Windows, dialogs, alerts
+- Groups, toolbars, scroll areas
 
----
+### 4. Action Execution
 
-## What OSCP Wraps
+**Mouse:** click (single/double/triple/right), drag, move, scroll
 
-| Platform | Wraps | Coverage |
-|----------|-------|----------|
-| **macOS** | AXUIElement + CDP | 95% |
-| **Linux** | AT-SPI2 + X11 + CDP | 90-95% |
+**Keyboard:** type text, key combos (Ctrl+S, Cmd+S, Alt+Tab, etc.)
 
----
-
-## Protocol
-
-Full protocol specification in `protocol/SPEC.md`:
-- Request-response model (no streaming)
-- JSON over newline-delimited Unix socket
-- 15 message types
-- Complete SDK examples
-
----
-
-## Fallback Hierarchy
-
-```
-LEVEL 1: Native Semantic Tree (90%)
-   └── AXUIElement / AT-SPI2
-
-LEVEL 2: CDP Bridge (Browser/Electron)
-   └── Chrome DevTools Protocol
-
-LEVEL 3: Structural Heuristics
-   └── Position-based inference
-
-LEVEL 4: Position-Only Mode
-   └── Agent explores
-
-LEVEL 5: Human Handoff
-   └── Graceful degradation
-```
-
----
-
-## Confidence
+### 5. Quality Scoring
 
 | Confidence | Threshold | Agent Action |
 |------------|-----------|--------------|
-| **HIGH** | > 0.8 | Execute immediately |
-| **MEDIUM** | 0.5-0.8 | Execute with monitoring |
-| **LOW** | 0.3-0.5 | Explore first |
-| **NONE** | < 0.2 | Human handoff |
+| HIGH | > 80% | Execute immediately |
+| MEDIUM | 50-80% | Execute with monitoring |
+| LOW | 30-50% | Explore first |
+| NONE | < 30% | Human handoff |
+
+### 6. 5-Level Fallback Chain
+
+| Level | Method | Coverage |
+|-------|--------|----------|
+| 1 | Native semantic tree | 90% |
+| 2 | CDP bridge | Browsers |
+| 3 | Structural heuristics | Position inference |
+| 4 | Position-only | Custom renderers |
+| 5 | Human handoff | Graceful degradation |
+
+### 7. Error Handling
+
+- Actionable errors with alternatives
+- Human handoff escalation
+- Learning from human interventions
 
 ---
 
-## Implementation Status
+## Specs
 
-| Spec | Status | Ready? |
-|------|--------|--------|
-| Protocol | ✅ Complete (42KB) | Yes |
-| macOS | ✅ Complete (145KB) | Yes |
-| Linux | ✅ Detailed | Yes |
-| Windows | ⏸️ Deferred | No |
-
-**All specs are implementation-ready with complete code examples.**
+| Spec | Status | Size |
+|------|--------|------|
+| Protocol | ✅ Complete | 44KB |
+| macOS | ✅ Complete | 145KB |
+| Linux | ✅ Complete | 31KB |
+| Windows | ⏸️ Deferred | - |
 
 ---
 
-## Next Steps
+## Time Estimates
 
-1. Implement macOS driver (4-5 weeks)
-2. Test with real applications
-3. Publish as MCP server for Cline/Cursor/Windsurf
-4. Implement Linux driver (6-7 weeks)
+| Platform | Time |
+|----------|------|
+| macOS | 4-5 weeks |
+| Linux | 6-7 weeks |
+| **Total** | **10-12 weeks** |
 
 ---
 
 ## Status
 
-- [x] Protocol: Complete (with SDKs)
-- [x] macOS: Complete (full code)
-- [x] Linux: Detailed spec ready
-- [ ] macOS implementation: Pending
-- [ ] Linux implementation: Pending
-- [ ] Windows: Deferred
+- [x] Protocol specification complete
+- [x] macOS platform detailed spec complete
+- [x] Linux platform detailed spec complete
+- [ ] macOS implementation pending
+- [ ] Linux implementation pending
+- [ ] Windows implementation deferred
