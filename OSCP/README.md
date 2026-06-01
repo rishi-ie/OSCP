@@ -1,230 +1,97 @@
 # OSCP — Operating System Context Protocol
 
-**Version:** 0.5.0
-**Status:** Specs Complete. Ready for Implementation.
+**Give CLI agents eyes.**
 
 ---
 
-## Vision
+## Overview
 
-> Give CLI agents eyes. See any desktop app without screenshots.
+OSCP is an open-source protocol and implementation that enables AI agents to see and interact with any desktop application through native OS accessibility APIs.
 
-OSCP captures the OS accessibility tree and exposes it to AI agents via MCP. No screenshots, no VLM—just structured JSON of every button, field, and menu.
-
----
-
-## What OSCP Does
-
-OSCP runs as an MCP server. When an agent needs to see the desktop, OSCP:
-
-1. **Captures** the current screen as a semantic tree using native OS accessibility APIs
-2. **Falls back** to CDP for web content (Safari, Chrome, Electron apps)
-3. **Falls back** to screenshot for games and custom renderers
-4. **Returns** a unified element tree the agent can query
-
-That's it. The agent decides what to do with it.
+Unlike screen-capture approaches, OSCP reads the actual UI element tree—the same tree that accessibility tools and screen readers use. This makes it fast, deterministic, and accurate.
 
 ---
 
-## Architecture
+## How It Works
 
-```
-CLI AGENT                           OSCP (MCP Server)
-    │                                     │
-    │ ──── list_windows ────────────────►│
-    │ ◄─── [{title, pid, bounds}] ───────│
-    │                                     │
-    │ ──── get_tree(pid) ────────────────►│
-    │                                     ├─► AXUIElement / AT-SPI2 / UIA
-    │                                     ├─► CDP (if browser)
-    │                                     ├─► Screenshot (if needed)
-    │ ◄─── {elements: [...]} ─────────────│
-    │                                     │
-    │ Agent decides action                │
-    │ (uses Python/macOS automation)       │
-```
+OSCP runs as a local MCP server. When an agent needs to see the desktop, it sends a request and OSCP returns a structured tree of every visible element: buttons, text fields, menus, tabs, and more.
+
+The agent interprets the tree and decides what to do. OSCP stays focused on one thing: providing an accurate, up-to-date view of the desktop.
 
 ---
 
-## Capture Pipeline
+## Key Features
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    OSCP CAPTURE                            │
-│                                                             │
-│  1. NATIVE ACCESSIBILITY                                   │
-│     ├── macOS: AXUIElement                                │
-│     ├── Linux: AT-SPI2                                    │
-│     └── Windows: UIAutomation                            │
-│                                                             │
-│  2. CDP DOM BRIDGE (fallback)                             │
-│     └── Safari, Chrome, VS Code, Electron                  │
-│         └── DOM tree with bounding boxes                   │
-│                                                             │
-│  3. SCREENSHOT (last resort)                              │
-│     └── Games, custom renderers, DRM                       │
-│         └── PNG + VLM ready (agent uses VLM externally)    │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
+### Native API Integration
 
----
+OSCP reads directly from the OS accessibility layer on each platform. No screenshots. No pixel analysis. Just structured data from the same APIs that assistive technologies use.
 
-## MCP Tools
-
-### `list_windows`
-
-Returns all visible windows.
-
-```json
-{
-  "windows": [
-    {
-      "pid": 1234,
-      "title": "Visual Studio Code",
-      "bounds": {"x": 0, "y": 0, "width": 1920, "height": 1080},
-      "app": "com.microsoft.VSCode"
-    }
-  ]
-}
-```
-
-### `get_tree`
-
-Returns the full element tree for a window.
-
-```json
-{
-  "pid": 1234,
-  "source": "axuielement",
-  "elements": [
-    {
-      "id": "e_001",
-      "role": "button",
-      "name": "Save",
-      "bounds": {"x": 1750, "y": 5, "width": 80, "height": 25},
-      "enabled": true
-    },
-    {
-      "id": "e_002",
-      "role": "text_field",
-      "name": "Search",
-      "value": "",
-      "bounds": {"x": 300, "y": 10, "width": 300, "height": 30},
-      "enabled": true
-    }
-  ]
-}
-```
-
-### `find_elements`
-
-Search elements by name or type.
-
-```json
-{
-  "elements": [
-    {
-      "id": "e_001",
-      "role": "button",
-      "name": "Save",
-      "bounds": {...}
-    }
-  ]
-}
-```
-
----
-
-## Element Format
-
-Every element includes:
-
-| Field | Example |
-|-------|---------|
-| `id` | `"e_001"` |
-| `role` | `"button"`, `"text_field"`, `"menu_item"`, etc. |
-| `name` | `"Save"`, `"Search"`, `"File"` |
-| `value` | Current value (for text fields, etc.) |
-| `bounds` | `{"x": 100, "y": 50, "width": 80, "height": 25}` |
-| `enabled` | `true` / `false` |
-| `focused` | `true` / `false` |
-
-### Supported Roles
-
-- `window`, `dialog`, `alert`
-- `button`, `check_box`, `radio_button`
-- `text_field`, `text_area`, `secure_field`
-- `combo_box`, `drop_down`
-- `menu`, `menu_bar`, `menu_item`
-- `tab`, `tab_group`
-- `list`, `list_item`
-- `table`, `row`, `cell`
-- `tool_bar`, `group`
-- `link`, `image`, `icon`
-- `static_text`, `label`
-
----
-
-## Capture Coverage
-
-| Platform | Native API | Coverage |
+| Platform | Technology | Coverage |
 |----------|------------|----------|
 | macOS | AXUIElement | 90% |
 | Linux | AT-SPI2 | 85% |
 | Windows | UIAutomation | 90% |
 
-| App Type | Coverage | Fallback |
-|----------|----------|----------|
-| Native apps | Excellent | — |
-| Electron (VS Code, Slack) | Good | CDP |
-| Browsers | Partial | CDP |
-| Games, CAD | None | Screenshot |
+### Progressive Fallback
+
+OSCP tries the most accurate source first, then falls back as needed:
+
+1. **Native accessibility tree** — Full element hierarchy for standard applications
+2. **CDP DOM bridge** — Browser and Electron applications
+3. **Screenshot** — Games and custom renderers that lack accessibility APIs
+
+### Unified Element Model
+
+Every UI element is returned in a consistent format regardless of platform:
+
+- Element type and name
+- Screen position and dimensions
+- Current state (enabled, focused, selected)
+- Nested hierarchy
+
+### CLI Agent Integration
+
+OSCP implements the Model Context Protocol, the standard for CLI agent tool integration. It works with Claude Code, Cursor, Windsurf, and any other MCP-compatible agent.
 
 ---
 
-## CDP Fallback
+## What OSCP Returns
 
-When native APIs can't see the content (browsers, Electron), OSCP connects to the browser's CDP endpoint:
+For each visible application, OSCP provides:
 
-```json
-{
-  "source": "cdp",
-  "url": "https://github.com/rishi-ie/OSCP",
-  "elements": [
-    {
-      "id": "cdp_001",
-      "role": "link",
-      "name": "OSCP",
-      "tag": "A",
-      "bounds": {...}
-    }
-  ]
-}
-```
+- **Window information** — Title, position, dimensions, process ID
+- **Element tree** — Every interactive and informational element
+- **Element attributes** — Type, name, value, state, position
+- **Source indicator** — Where the data came from (native API, browser DOM, screenshot)
 
 ---
 
-## Screenshot Fallback
+## Application Compatibility
 
-When everything else fails (games, custom engines):
-
-```json
-{
-  "source": "screenshot",
-  "width": 1920,
-  "height": 1080,
-  "data": "base64_encoded_png..."
-}
-```
-
-Agent can then use a VLM externally to analyze.
+| Application Type | Coverage | Notes |
+|-----------------|----------|-------|
+| Native desktop apps | Excellent | Full tree, all interactions |
+| Web browsers | Partial | Requires CDP bridge |
+| Electron apps | Good | Variable depending on implementation |
+| Custom renderers | None | Falls back to screenshot |
 
 ---
 
-## CLI Agent Integration
+## Protocol Design
 
-Add to your MCP config:
+OSCP is both a specification and an implementation. The protocol defines:
+
+- **Discovery** — List windows, get element trees, search by name or type
+- **Element schema** — Unified format for all platform elements
+- **Fallback behavior** — How and when to use alternative data sources
+
+The implementation is a single binary that runs locally. No cloud services. No API keys. All processing happens on the local machine.
+
+---
+
+## Getting Started
+
+Add OSCP to your MCP configuration:
 
 ```json
 {
@@ -237,53 +104,45 @@ Add to your MCP config:
 }
 ```
 
-Works with Claude Code, Cursor, Windsurf, or any MCP-compatible CLI agent.
-
----
-
-## Directory Structure
-
-```
-OSCP/
-├── README.md                    # This file
-├── SPEC.md                     # Architecture overview
-├── protocol/
-│   └── SPEC.md                 # MCP protocol + element format
-├── platforms/
-│   ├── macos/SPEC.md           # macOS implementation
-│   ├── linux/SPEC.md          # Linux implementation
-│   └── windows/SPEC.md        # Windows implementation
-├── agents/
-│   └── SPEC.md                 # Agent integration guide
-└── MEMORY/                    # Project context
-```
-
----
-
-## Implementation Timeline
-
-| Platform | Time |
-|----------|------|
-| macOS | 3-4 weeks |
-| Linux | 4-5 weeks |
-| Windows | 4-5 weeks |
-| **Total** | **11-14 weeks** |
-
 ---
 
 ## Status
 
-- [x] Protocol specification complete
-- [x] Platform specs complete
-- [ ] Implementation pending
+OSCP is currently in the specification phase. Implementation will follow.
+
+| Component | Status |
+|-----------|--------|
+| Protocol specification | Complete |
+| macOS specification | Complete |
+| Linux specification | Complete |
+| Windows specification | Complete |
+| Implementation | Pending |
 
 ---
 
-## References
+## Project Structure
 
-- **GitHub:** github.com/rishi-ie/OSCP
-- **MCP Protocol:** modelcontextprotocol.io
+```
+OSCP/
+├── README.md
+├── SPEC.md
+├── protocol/           # Protocol specification
+├── platforms/          # Platform implementations
+│   ├── macos/
+│   ├── linux/
+│   └── windows/
+└── agents/            # Agent integration guide
+```
 
 ---
 
-*OSCP — Desktop awareness for CLI agents.*
+## Resources
+
+- **Repository:** github.com/rishi-ie/OSCP
+- **Protocol:** Model Context Protocol (modelcontextprotocol.io)
+
+---
+
+## License
+
+MIT
